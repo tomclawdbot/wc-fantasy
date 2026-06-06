@@ -6,34 +6,32 @@ export default function AuthCallback() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Try getSessionFromURL (Supabase v2 handles magic link tokens here)
-    const handleCallback = async () => {
-      const { data, error } = await supabase.auth.getSessionFromURL();
-      if (!error && data.session) {
-        navigate('/');
-        return;
-      }
+    // Supabase magic links use ?token= in the URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const refreshToken = params.get('refresh_token');
 
-      // Fallback: manually extract token from URL params (Supabase magic links use ?token=)
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
-      const refreshToken = params.get('refresh_token');
-      if (token) {
-        const { error: setErr } = await supabase.auth.setSession({
-          access_token: token,
-          refresh_token: refreshToken ?? '',
-        });
-        if (!setErr) {
+    if (token) {
+      supabase.auth.setSession({
+        access_token: token,
+        refresh_token: refreshToken ?? '',
+      }).then(({ error }) => {
+        if (!error) {
           navigate('/');
-          return;
+        } else {
+          navigate('/login');
         }
-      }
-
-      // Nothing worked → redirect to login
-      navigate('/login');
-    };
-
-    handleCallback();
+      });
+    } else {
+      // No token — try getting existing session
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) {
+          navigate('/');
+        } else {
+          navigate('/login');
+        }
+      });
+    }
   }, [navigate]);
 
   return (
