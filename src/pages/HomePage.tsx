@@ -52,7 +52,10 @@ export default function HomePage() {
       setRoster(r);
       setLoading(false);
     };
-    load();
+    load().catch(err => {
+      console.error('HomePage load error:', err);
+      setLoading(false);
+    });
   }, [navigate]);
 
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
@@ -62,6 +65,45 @@ export default function HomePage() {
   const nextMatchday = matchdays.find(m => new Date(m.lock_at) > new Date());
   const openWindow = windows.find(w => new Date(w.opens_at) <= new Date() && new Date(w.closes_at) >= new Date());
   const activePhase = nextMatchday?.phase ?? matchdays[matchdays.length - 1]?.phase ?? 'Pre-Draft';
+
+  // No league data yet — show welcome/setup screen
+  if (!draft) {
+    return (
+      <div className="page">
+        <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: 8 }}>🏆 WC Fantasy League</h1>
+          <p style={{ color: 'var(--muted)', marginBottom: 32 }}>Welcome, {manager?.display_name}! Your league is being set up.</p>
+          <div className="card" style={{ maxWidth: 400, margin: '0 auto', textAlign: 'left' }}>
+            <h2 style={{ fontSize: '1rem', marginBottom: 12 }}>📋 Commissioner Setup</h2>
+            <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginBottom: 16 }}>As commissioner, you'll need to:</p>
+            <ol style={{ color: 'var(--muted)', fontSize: '0.875rem', paddingLeft: 20, lineHeight: 2 }}>
+              <li>Add the 10 managers to the league</li>
+              <li>Import World Cup players from API-Football</li>
+              <li>Start the snake draft</li>
+              <li>Set up matchdays and transfer windows</li>
+            </ol>
+            <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginTop: 16 }}>
+              Use the Supabase dashboard (Table Editor → managers) to add yourself and other managers. Set your <code>is_commissioner=true</code>, then return here to start the draft.
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 24 }}>
+            <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate('/draft')}>
+              <h3 style={{ fontSize: '1rem', marginBottom: 4 }}>📣 Draft</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>View draft room (pending start)</p>
+            </div>
+            <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate('/team')}>
+              <h3 style={{ fontSize: '1rem', marginBottom: 4 }}>👥 My Team</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>0 players — after draft</p>
+            </div>
+            <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate('/standings')}>
+              <h3 style={{ fontSize: '1rem', marginBottom: 4 }}>📊 Standings</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>No data yet</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
