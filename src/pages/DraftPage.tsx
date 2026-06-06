@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getMyManager, getDraftState, getDraftPicks, getAvailablePlayers,
-  getMyQueue, upsertQueue, makePick, subscribeToDraft, type DraftState, type DraftPick, type Player
+  getMyQueue, upsertQueue, makePick, subscribeToDraft, supabase, type DraftState, type DraftPick, type Player
 } from '../lib/supabase';
 
 function getSnakeOrder(rounds = 15): number[] {
@@ -132,6 +132,13 @@ export default function DraftPage() {
           </p>
         </div>
         {isMyTurn && <Timer deadline={draft?.pick_deadline ?? null} />}
+        {manager?.is_commissioner && draft?.status === 'scheduled' && (
+          <button className="btn-primary" onClick={async () => {
+            const { data, error } = await supabase.rpc('start_draft');
+            if (error) alert('Failed: ' + error.message);
+            else fetchAll();
+          }}>Start Draft</button>
+        )}
       </div>
 
       {/* Quota bars */}
