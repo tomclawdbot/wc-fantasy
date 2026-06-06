@@ -11,6 +11,7 @@ import TeamPage from './pages/TeamPage';
 import TransfersPage from './pages/TransfersPage';
 import StandingsPage from './pages/StandingsPage';
 import LoginPage from './pages/LoginPage';
+import AuthCallback from './pages/AuthCallback';
 
 const queryClient = new QueryClient();
 
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/transfers" element={<TransfersPage />} />
           <Route path="/standings" element={<StandingsPage />} />
           <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
