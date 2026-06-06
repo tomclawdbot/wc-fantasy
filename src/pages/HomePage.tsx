@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getDraftState, getStandings, getMatchdays, getTransferWindows, getMyRoster } from '../lib/supabase';
+import { getMyManager, getDraftState, getStandings, getMatchdays, getTransferWindows, getMyRoster, supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 export default function HomePage() {
@@ -14,8 +14,29 @@ export default function HomePage() {
 
   useEffect(() => {
     const load = async () => {
-      const m = await getMyManager();
-      if (!m) { navigate('/login'); return; }
+      let m = await getMyManager();
+      
+      // Auto-enroll if first time (creates manager row for this user)
+      if (!m) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: newManager, error } = await supabase.from('managers').insert({
+            user_id: user.id,
+            display_name: user.email?.split('@')[0] ?? 'Manager',
+            is_commissioner: false,
+          }).select().single();
+          if (!error && newManager) {
+            m = newManager;
+          } else {
+            navigate('/login');
+            return;
+          }
+        } else {
+          navigate('/login');
+          return;
+        }
+      }
+
       setManager(m);
       const [d, s, md, w, r] = await Promise.all([
         getDraftState(),
