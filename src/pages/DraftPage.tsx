@@ -91,7 +91,7 @@ export default function DraftPage() {
   useEffect(() => {
     fetchAll();
     const unsub = subscribeToDraft(fetchAll);
-    return unsub;
+    return () => { unsub(); };
   }, [fetchAll]);
 
   const handlePick = async () => {

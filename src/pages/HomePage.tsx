@@ -92,7 +92,7 @@ export default function HomePage() {
         <div className="card">
           <div style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 }}>My Rank</div>
           <div style={{ fontSize: '2rem', fontWeight: 700 }}>
-            #{standings.findIndex(s => s.manager_id === manager?.id) + 1 ?? '—'}
+            #{standings.findIndex(s => s.manager_id === manager?.id) + 1 || '—'}
           </div>
         </div>
         <div className="card">

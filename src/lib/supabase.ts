@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string;
@@ -74,6 +76,14 @@ export interface Standing {
   total_points: number;
   by_phase: Record<string, number>;
   managers?: Manager;
+}
+
+export interface TransferWindow {
+  id: string;
+  phase: string;
+  opens_at: string;
+  closes_at: string;
+  free_count: number;
 }
 
 // ─── RPC Helpers ───────────────────────────────────────────────

@@ -21,7 +21,7 @@ export default function StandingsPage() {
 
   useEffect(() => {
     const unsub = subscribeToStandings(load);
-    return unsub;
+    return () => { unsub(); };
   }, []);
 
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
