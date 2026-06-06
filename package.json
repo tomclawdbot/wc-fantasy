@@ -1,0 +1,43 @@
+{
+  "name": "wc-fantasy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx",
+    "test": "vitest run && playwright test",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:local": "playwright test --project=chromium --environment=local",
+    "test:e2e:staging": "playwright test --project=chromium --environment=staging",
+    "test:e2e:prod": "playwright test --project=chromium --environment=production --tag=critical",
+    "deploy:staging": "vercel --prod",
+    "deploy:prod": "vercel --prod --confirm",
+    "db:reset": "supabase db reset",
+    "db:seed": "node scripts/seed.ts",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "@tanstack/react-query": "^5.62.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.18.0",
+    "msw": "^2.7.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
