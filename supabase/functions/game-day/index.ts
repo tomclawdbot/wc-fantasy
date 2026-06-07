@@ -6,16 +6,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ─── Scoring constants (SINGLE SOURCE OF TRUTH — also in import-events) ───
-const SCORE = {
+// ─── Single source of truth for all scoring values ───
+// Matches TEST_RESULTS.md spec: goal 8/16, assist 4/8, knockout ×2
+export const SCORE = {
   appearance: 2,
-  goal: { GK: 6, DEF: 5, MID: 4, FWD: 3 },
-  assist: 3,
-  cleanSheet: { GK: 5, DEF: 4, MID: 2 },
+  goal: 8,          // all positions same in spec
+  assist: 4,
+  cleanSheet: { GK: 4, DEF: 4, MID: 2 },   // no FWD (can't keep clean sheet as FWD)
   save: 1,
   yellowCard: -1,
   redCard: -3,
-  knockoutMultiplier: 1.5,
+  ownGoal: -4,
+  penaltyMissed: -2,
+  penaltySaved: 4,
+  knockoutMultiplier: 2,
 } as const;
 
 // ─── game-day ──────────────────────────────────────────────────
@@ -271,7 +275,7 @@ function computePoints(eventTypes: string[], pos: string, isKnockout: boolean): 
   // Goals
   const goalCount = eventCounts['Goal'] ?? 0;
   if (goalCount > 0) {
-    const goalPts = (SCORE.goal[pos as keyof typeof SCORE.goal] ?? 3) * goalCount;
+    const goalPts = SCORE.goal * goalCount;
     points += goalPts;
     breakdown.goal = { count: goalCount, pts: goalPts };
   }
@@ -286,7 +290,7 @@ function computePoints(eventTypes: string[], pos: string, isKnockout: boolean): 
   // Clean sheet (GK/DEF/MID only)
   const cleanSheetCount = eventCounts['CleanSheet'] ?? 0;
   if (cleanSheetCount > 0 && pos in SCORE.cleanSheet) {
-    const csPts = SCORE.cleanSheet[pos as keyof typeof SCORE.cleanSheet]! * cleanSheetCount;
+    const csPts = SCORE.cleanSheet[pos as keyof typeof SCORE.cleanSheet]!;
     points += csPts;
     breakdown.cleanSheet = { count: cleanSheetCount, pts: csPts };
   }

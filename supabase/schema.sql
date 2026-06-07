@@ -629,3 +629,80 @@ BEGIN
   RETURN '{"ok": true}'::JSON;
 END;
 $function$;
+
+-- ─── compute_score ─────────────────────────────────────────────
+-- Compute points for a single event. Matches TEST_RESULTS.md spec: goal=8, assist=4, knockout=×2
+CREATE OR REPLACE FUNCTION public.compute_score(p_player_id uuid, p_fixture_id uuid, p_event_type text, p_minute integer, p_phase text DEFAULT 'group'::text)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_points INTEGER := 0;
+  v_bonus INTEGER := 1;
+BEGIN
+  CASE p_event_type
+    WHEN 'Goal' THEN v_points := 8;
+    WHEN 'Assist' THEN v_points := 4;
+    WHEN 'OwnGoal' THEN v_points := -4;
+    WHEN 'YellowCard' THEN v_points := -1;
+    WHEN 'SecondYellow' THEN v_points := -3;
+    WHEN 'RedCard' THEN v_points := -5;
+    WHEN 'PenaltySaved' THEN v_points := 4;
+    WHEN 'PenaltyMissed' THEN v_points := -3;
+    WHEN 'CleanSheet' THEN v_points := 4;
+    WHEN 'GoalsConceded' THEN v_points := 0;
+    ELSE v_points := 0;
+  END CASE;
+
+  IF p_phase IN ('knockout', 'round_of_16', 'quarter', 'semi', 'final') THEN
+    v_bonus := 2;
+  END IF;
+
+  RETURN v_points * v_bonus;
+END;
+$function$;
+
+-- ─── recompute_standings ─────────────────────────────────────────────
+-- Reset all manager standings to 0. Called before full recalculation.
+CREATE OR REPLACE FUNCTION public.recompute_standings()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  UPDATE standings SET total_points = 0, by_phase = '{}'::jsonb, updated_at = now();
+END;
+$function$;
+
+-- ─── set_lineup ─────────────────────────────────────────────────────
+-- Atomic upsert of XI for a manager on a matchday.
+-- Validates all 11 players are in the manager's active roster.
+CREATE OR REPLACE FUNCTION public.set_lineup(p_manager_id uuid, p_matchday_id uuid, p_player_ids uuid[])
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  IF array_length(p_player_ids, 1) != 11 THEN
+    RETURN json_build_object('error', 'Must select exactly 11 players');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM unnest(p_player_ids) pid
+    WHERE EXISTS (
+      SELECT 1 FROM rosters r WHERE r.manager_id = p_manager_id AND r.player_id = pid AND r.active = true
+    )
+  ) THEN
+    RETURN json_build_object('error', 'One or more players not in your active roster');
+  END IF;
+
+  DELETE FROM lineups WHERE manager_id = p_manager_id AND matchday_id = p_matchday_id;
+  INSERT INTO lineups (manager_id, matchday_id, player_id, position)
+  SELECT p_manager_id, p_matchday_id, pid,
+    COALESCE((SELECT position FROM players WHERE id = pid LIMIT 1), 'MID')
+  FROM unnest(p_player_ids) pid;
+
+  RETURN json_build_object('ok', true, 'count', array_length(p_player_ids, 1));
+END;
+$function$;

@@ -150,23 +150,31 @@ export function validateTransfer(
 }
 
 // ─── SCORING ────────────────────────────────────────────────
+// Single source of truth — matches TEST_RESULTS.md spec
+// Goal: 8 all positions | Assist: 4 | Clean sheet: GK=4/DEF=4/MID=2
+// Knockout: ×2 | Appearance: 2 | Save: 1 | Yellow: -1 | Red: -3
+// Own goal: -4 | Penalty missed: -2 | Penalty saved: 4
 
-export type ScoringConfig = {
-  appearance: number;
-  goal: Record<string, number>;
-  assist: number;
-  cleanSheet: Record<string, number>;
-  save: number;
-  yellowCard: number;
-  redCard: number;
-  penaltyMissed: number;
-  knockoutMultiplier: number;
-};
+export const DEFAULT_SCORING = {
+  appearance: 2,
+  goal: { GK: 8, DEF: 8, MID: 8, FWD: 8 },
+  assist: 4,
+  cleanSheet: { GK: 4, DEF: 4, MID: 2 },
+  save: 1,
+  yellowCard: -1,
+  redCard: -3,
+  ownGoal: -4,
+  penaltyMissed: -2,
+  penaltySaved: 4,
+  knockoutMultiplier: 2,
+} as const;
 
+export type ScoringConfig = typeof DEFAULT_SCORING;
 export type ScoreResult = { points: number; breakdown: Record<string, any> };
 
 /**
  * Compute points for a player's performance in one fixture.
+ * Pass DEFAULT_SCORING or league config as config param.
  */
 export function computeScore(
   events: {
@@ -180,11 +188,10 @@ export function computeScore(
     penaltyMissed?: number;
   },
   position: string,
-  config: ScoringConfig,
+  config: Partial<ScoringConfig> = DEFAULT_SCORING,
   knockout: boolean = false,
   lineupContext: { inStartingXI: boolean } = { inStartingXI: true }
 ): ScoreResult {
-  // Substitute not in starting XI scores 0
   if (!lineupContext.inStartingXI) {
     return { points: 0, breakdown: { reason: 'not in starting XI' } };
   }
@@ -193,51 +200,57 @@ export function computeScore(
   const breakdown: Record<string, any> = {};
 
   if (events.appearance) {
-    points += config.appearance;
-    breakdown.appearance = { count: 1, pts: config.appearance };
+    const ap = config.appearance ?? 2;
+    points += ap;
+    breakdown.appearance = { count: 1, pts: ap };
   }
 
   if (events.goal) {
-    const pts = (config.goal[position] ?? 3) * events.goal;
+    const pts = (config.goal?.[position] ?? 8) * events.goal;
     points += pts;
     breakdown.goal = { count: events.goal, pts };
   }
 
   if (events.assist) {
-    points += config.assist * events.assist;
-    breakdown.assist = { count: events.assist, pts: config.assist * events.assist };
+    const ap = config.assist ?? 4;
+    points += ap * events.assist;
+    breakdown.assist = { count: events.assist, pts: ap * events.assist };
   }
 
-  if (events.cleanSheet && config.cleanSheet[position]) {
-    const pts = config.cleanSheet[position]!;
-    points += pts;
-    breakdown.cleanSheet = { count: 1, pts };
+  if (events.cleanSheet && config.cleanSheet?.[position]) {
+    points += config.cleanSheet[position]!;
+    breakdown.cleanSheet = { count: 1, pts: config.cleanSheet[position] };
   }
 
   if (events.save) {
-    points += config.save * events.save;
-    breakdown.save = { count: events.save, pts: config.save * events.save };
+    const sp = config.save ?? 1;
+    points += sp * events.save;
+    breakdown.save = { count: events.save, pts: sp * events.save };
   }
 
   if (events.yellowCard) {
-    points += config.yellowCard * events.yellowCard;
-    breakdown.yellowCard = { count: events.yellowCard, pts: config.yellowCard * events.yellowCard };
+    const yc = config.yellowCard ?? -1;
+    points += yc * events.yellowCard;
+    breakdown.yellowCard = { count: events.yellowCard, pts: yc * events.yellowCard };
   }
 
   if (events.redCard) {
-    points += config.redCard * events.redCard;
-    breakdown.redCard = { count: events.redCard, pts: config.redCard * events.redCard };
+    const rc = config.redCard ?? -3;
+    points += rc * events.redCard;
+    breakdown.redCard = { count: events.redCard, pts: rc * events.redCard };
   }
 
   if (events.penaltyMissed) {
-    points += config.penaltyMissed * events.penaltyMissed;
-    breakdown.penaltyMissed = { count: events.penaltyMissed, pts: config.penaltyMissed * events.penaltyMissed };
+    const pm = config.penaltyMissed ?? -2;
+    points += pm * events.penaltyMissed;
+    breakdown.penaltyMissed = { count: events.penaltyMissed, pts: pm * events.penaltyMissed };
   }
 
-  // Apply knockout multiplier
   if (knockout && config.knockoutMultiplier) {
+    const old = points;
     points = Math.round(points * config.knockoutMultiplier);
     (breakdown as any).knockoutMultiplier = config.knockoutMultiplier;
+    (breakdown as any).knockoutBonus = points - old;
   }
 
   breakdown.total = points;

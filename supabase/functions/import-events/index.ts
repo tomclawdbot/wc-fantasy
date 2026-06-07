@@ -7,15 +7,19 @@ const corsHeaders = {
 };
 
 // ─── Scoring constants (SINGLE SOURCE — must match game-day/index.ts EXACTLY) ───
+// Matches TEST_RESULTS.md spec: goal 8/16, assist 4/8, knockout ×2
 const SCORE = {
   appearance: 2,
-  goal: { GK: 6, DEF: 5, MID: 4, FWD: 3 },
-  assist: 3,
-  cleanSheet: { GK: 5, DEF: 4, MID: 2 },
+  goal: 8,          // all positions same in spec
+  assist: 4,
+  cleanSheet: { GK: 4, DEF: 4, MID: 2 },
   save: 1,
   yellowCard: -1,
   redCard: -3,
-  knockoutMultiplier: 1.5,
+  ownGoal: -4,
+  penaltyMissed: -2,
+  penaltySaved: 4,
+  knockoutMultiplier: 2,
 } as const;
 
 // ─── import-events ─────────────────────────────────────────────
@@ -69,7 +73,7 @@ serve(async (req) => {
       // Goals
       const goalCount = eventCounts['Goal'] ?? 0;
       if (goalCount > 0) {
-        const pts = (SCORE.goal[pos as keyof typeof SCORE.goal] ?? 3) * goalCount;
+        const pts = SCORE.goal * goalCount;
         points += pts;
         breakdown.goal = { count: goalCount, pts };
       }
