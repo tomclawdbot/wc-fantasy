@@ -165,7 +165,11 @@ export default function DraftPage() {
                   const isActive = slot === currentPickerSlot && draft?.status === 'in_progress';
                   return (
                     <div key={r} className={`draft-board-cell ${isActive ? 'your-turn' : ''} ${pick ? 'picked' : ''}`}>
-                      {pick ? '✓' : pickNo <= (draft?.current_pick_no ?? 0) ? '—' : ''}
+                      {pick ? (
+                        <span title={`${pick.players?.name ?? ''} (${pick.players?.position ?? ''})`}>
+                          {pick.players?.name?.split(' ').slice(-1)[0] ?? '✓'}
+                        </span>
+                      ) : pickNo <= (draft?.current_pick_no ?? 0) ? '—' : ''}
                     </div>
                   );
                 })}

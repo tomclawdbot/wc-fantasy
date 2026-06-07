@@ -126,8 +126,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); }
   border-color: var(--accent);
   box-shadow: 0 0 8px rgba(74,222,128,0.3);
 }
-.draft-board-cell.picked { background: var(--surface2); color: var(--muted); }
-.draft-board-cell.picked::after { content: '✓'; display: block; font-size: 0.6rem; }
+.draft-board-cell.picked { background: var(--surface2); color: var(--text); font-size: 0.65rem; font-weight: 600; line-height: 1.2; }
+.draft-board-cell.picked span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; display: block; }
 
 /* Pool list */
 .pool-filters {
