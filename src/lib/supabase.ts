@@ -23,6 +23,10 @@ export interface Player {
   position: Position;
   status: 'active' | 'withdrawn';
   ranking?: number;
+  photo_url?: string;
+  nation_flag_url?: string;
+  club_name?: string;
+  club_logo_url?: string;
 }
 
 export interface Manager {

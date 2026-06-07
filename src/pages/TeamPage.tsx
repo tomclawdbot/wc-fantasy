@@ -2,9 +2,62 @@ import { useEffect, useState } from 'react';
 import { getMyManager, getMyRoster, getMatchdays, getLineup, upsertLineup, getDraftState, type Roster, type Matchday, type Lineup, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
-function getFormationCounts(xi: string[]): Record<string, number> {
-  // Count positions in XI — assume we look up each player
-  return { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+function PlayerBadge({ player, size = 'sm' }: { player: Player; size?: 'sm' | 'lg' }) {
+  const h = size === 'lg' ? 48 : 32;
+  const w = size === 'lg' ? 48 : 32;
+  const fotoSize = size === 'lg' ? 48 : 28;
+
+  return (
+    <div style={{ position: 'relative', width: w, height: h, flexShrink: 0 }}>
+      {/* Player photo */}
+      {player.photo_url ? (
+        <img
+          src={player.photo_url}
+          alt={player.name}
+          style={{ width: fotoSize, height: fotoSize, borderRadius: 4, objectFit: 'cover' }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+      ) : (
+        <div style={{
+          width: fotoSize, height: fotoSize, borderRadius: 4,
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: size === 'lg' ? '0.7rem' : '0.5rem', color: 'var(--muted)'
+        }}>
+          {player.name.charAt(0)}
+        </div>
+      )}
+
+      {/* Club logo — bottom right */}
+      {player.club_logo_url && (
+        <img
+          src={player.club_logo_url}
+          alt={player.club_name ?? ''}
+          style={{
+            position: 'absolute', bottom: -2, right: -2,
+            width: size === 'lg' ? 18 : 12, height: size === 'lg' ? 18 : 12,
+            borderRadius: 2, border: '1px solid var(--bg)',
+            background: '#fff', objectFit: 'contain'
+          }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+      )}
+
+      {/* Nation flag — top right */}
+      {player.nation_flag_url && (
+        <img
+          src={player.nation_flag_url}
+          alt={player.nation}
+          style={{
+            position: 'absolute', top: -2, right: -2,
+            width: size === 'lg' ? 16 : 11, height: size === 'lg' ? 16 : 11,
+            borderRadius: 2, border: '1px solid var(--bg)'
+          }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+      )}
+    </div>
+  );
 }
 
 export default function TeamPage() {
@@ -109,6 +162,7 @@ export default function TeamPage() {
                         onClick={() => !locked(activeMd) && player && togglePlayer(player.id)}>
                         {player ? (
                           <>
+                            <PlayerBadge player={player} size="sm" />
                             <span style={{ fontSize: '0.6rem', color: 'var(--accent)', fontWeight: 700 }}>{player.position}</span>
                             <span style={{ fontSize: '0.65rem', fontWeight: 600, marginTop: 2 }}>{player.name.split(' ').pop()}</span>
                           </>
@@ -139,11 +193,16 @@ export default function TeamPage() {
                           style={{
                             borderColor: inXi ? 'var(--accent)' : undefined,
                             background: inXi ? 'rgba(74,222,128,0.08)' : undefined,
-                            cursor: 'pointer'
+                            cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '6px 10px',
                           }}
                           onClick={() => togglePlayer(p.id)}>
-                          <div style={{ fontWeight: 600, fontSize: '0.8rem' }}>{p.name}</div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{p.nation}</div>
+                          <PlayerBadge player={p} size="sm" />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>{p.club_name || p.nation}</div>
+                          </div>
                         </div>
                       );
                     })}
@@ -156,10 +215,14 @@ export default function TeamPage() {
           {locked(activeMd) && (
             <div className="card">
               <h2 style={{ fontSize: '0.9rem', marginBottom: 12 }}>Your XI for {activeMd.label}</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 6 }}>
                 {lineup.map(l => (
-                  <div key={l.player_id} className="roster-player">
-                    <div style={{ fontWeight: 600, fontSize: '0.8rem' }}>{l.players?.name}</div>
+                  <div key={l.player_id} className="roster-player" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <PlayerBadge player={l.players} size="sm" />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.8rem' }}>{l.players?.name}</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>{l.players?.club_name || l.players?.nation}</div>
+                    </div>
                     <span className={`badge badge-${l.players?.position?.toLowerCase()}`}>{l.players?.position}</span>
                   </div>
                 ))}
