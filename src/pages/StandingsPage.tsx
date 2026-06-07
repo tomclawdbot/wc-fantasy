@@ -47,7 +47,7 @@ export default function StandingsPage() {
               <tr key={s.manager_id} style={manager?.id === s.manager_id ? { background: 'rgba(74,222,128,0.05)' } : undefined}>
                 <td style={{ color: i === 0 ? 'var(--accent)' : 'var(--muted)', fontWeight: i === 0 ? 700 : 400 }}>{i + 1}</td>
                 <td>
-                  {s.managers?.display_name ?? 'Unknown'}
+                  {(s.managers?.team_name ?? s.managers?.display_name) ?? 'Unknown'}
                   {manager?.id === s.manager_id && <span style={{ marginLeft: 6, color: 'var(--accent)', fontSize: '0.7rem' }}>← you</span>}
                   {s.managers?.is_commissioner && <span style={{ marginLeft: 6, color: 'var(--accent2)', fontSize: '0.7rem' }}>⭐</span>}
                 </td>

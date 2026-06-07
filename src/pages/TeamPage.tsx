@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getMyRoster, getMatchdays, getLineup, upsertLineup, getDraftState, type Roster, type Matchday, type Lineup, type Player } from '../lib/supabase';
+import { getMyManager, getMyRoster, getMatchdays, getLineup, upsertLineup, getDraftState, updateTeamName, type Roster, type Matchday, type Lineup, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 function PlayerBadge({ player, size = 'sm' }: { player: Player; size?: 'sm' | 'lg' }) {
@@ -71,11 +71,14 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [teamName, setTeamName] = useState('');
 
   const load = async () => {
     const m = await getMyManager();
     if (!m) { navigate('/login'); return; }
     setManager(m);
+    setTeamName(m.team_name || m.display_name || '');
     const [r, md] = await Promise.all([getMyRoster(m.id), getMatchdays()]);
     setRoster(r);
     setMatchdays(md);
@@ -109,6 +112,13 @@ export default function TeamPage() {
     }
   };
 
+  const saveTeamName = async () => {
+    if (!teamName.trim()) return;
+    await updateTeamName(manager.id, teamName.trim());
+    setEditingName(false);
+    setManager((m: any) => ({ ...m, team_name: teamName.trim() }));
+  };
+
   const rosterByPos = (pos: string): Player[] =>
     roster.filter(r => r.players?.position === pos).map(r => r.players!);
 
@@ -121,7 +131,39 @@ export default function TeamPage() {
 
   return (
     <div className="page">
-      <h1 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 20 }}>My Squad</h1>
+      {/* Team name header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        {editingName ? (
+          <>
+            <input
+              type="text"
+              value={teamName}
+              onChange={e => setTeamName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && saveTeamName()}
+              autoFocus
+              style={{
+                flex: 1, maxWidth: 280,
+                padding: '8px 12px', borderRadius: 8,
+                border: '1px solid var(--accent)',
+                background: 'var(--card-bg)', color: 'var(--text)',
+                fontSize: '1rem', fontWeight: 700
+              }}
+            />
+            <button className="btn-primary" onClick={saveTeamName} style={{ fontSize: '0.8rem', padding: '6px 12px' }}>Save</button>
+            <button className="btn-secondary" onClick={() => { setEditingName(false); setTeamName(manager?.team_name || ''); }} style={{ fontSize: '0.8rem', padding: '6px 12px' }}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>{teamName || manager?.display_name}</h1>
+            <button
+              onClick={() => setEditingName(true)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--muted)', textDecoration: 'underline', padding: 0 }}
+            >
+              Edit name
+            </button>
+          </>
+        )}
+      </div>
 
       {/* Matchday selector */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>

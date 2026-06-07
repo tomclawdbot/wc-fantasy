@@ -35,6 +35,7 @@ export interface Manager {
   draft_slot: number;
   is_commissioner: boolean;
   league_id: string;
+  team_name?: string;
 }
 
 export interface DraftState {
@@ -288,4 +289,12 @@ export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
     .eq('watched', true)
     .eq('players.status', 'active');
   return (data ?? []).map(r => r.players as unknown as Player).filter(Boolean);
+}
+
+export async function updateTeamName(managerId: string, teamName: string): Promise<void> {
+  const { error } = await supabase
+    .from('managers')
+    .update({ team_name: teamName, updated_at: new Date().toISOString() })
+    .eq('id', managerId);
+  if (error) throw error;
 }

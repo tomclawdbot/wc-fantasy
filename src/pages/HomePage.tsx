@@ -177,7 +177,7 @@ export default function HomePage() {
               <div style={{ fontSize: '1.5rem', marginBottom: 4 }}>
                 {i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}
               </div>
-              <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{s.managers?.display_name}</div>
+              <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{s.managers?.team_name || s.managers?.display_name}</div>
               <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem' }}>{s.total_points} pts</div>
             </div>
           ))}
