@@ -42,10 +42,10 @@ export default function TransfersPage() {
     if (outId === inId) { setError('Cannot transfer same player'); return; }
     setError('');
     setSubmitting(true);
-    const { error: err } = await supabase.rpc('make_transfer', {
-      p_window_id: openWindow?.id,
+    const { error: err } = await supabase.rpc('transfer_player', {
       p_out_id: outId,
       p_in_id: inId,
+      p_window_id: openWindow?.id,
     });
     setSubmitting(false);
     if (err) { setError(err.message); }
