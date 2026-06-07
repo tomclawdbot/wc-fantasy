@@ -120,13 +120,15 @@ export default function PlayersPage() {
 
   // Filter + sort
   const searchNorm = search.toLowerCase().trim();
-  // Deduplication: for players with same normalized surname + position + nation,
-  // keep only the best-ranked (lowest number) and hide the rest from the main grid
-  const normalizedKey = (p: Player) => [p.name.split(' ').slice(-1)[0].toLowerCase().replace(/[^a-z]/g, ''), p.position, p.nation].join('|');
+  // Deduplication: for players with same normalized surname + nation,
+  // keep only the best-ranked (lowest number) and hide the rest from the main grid.
+  // Normalize: strip accents from full name, extract last word as surname.
+  const stripAccents = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const lastNameKey = (p: Player) => stripAccents(p.name.split(' ').slice(-1)[0] ?? '');
   const bestRank: Record<string, number> = {};
-  for (const p of players) { const k = normalizedKey(p); if (!bestRank[k] || (p.ranking ?? 999) < bestRank[k]) bestRank[k] = p.ranking ?? 999; }
+  for (const p of players) { const k = lastNameKey(p) + '|' + p.nation; if (!bestRank[k] || (p.ranking ?? 999) < bestRank[k]) bestRank[k] = p.ranking ?? 999; }
   const isDuplicate = (p: Player) => {
-    const k = normalizedKey(p);
+    const k = lastNameKey(p) + '|' + p.nation;
     return (p.ranking ?? 999) > bestRank[k];
   };
 
