@@ -120,12 +120,21 @@ export default function PlayersPage() {
 
   // Filter + sort
   const searchNorm = search.toLowerCase().trim();
-  const isAbbreviated = (name: string) => /^[A-Z]\. [A-Z]/.test(name);
+  // Deduplication: for players with same normalized surname + position + nation,
+  // keep only the best-ranked (lowest number) and hide the rest from the main grid
+  const normalizedKey = (p: Player) => [p.name.split(' ').slice(-1)[0].toLowerCase().replace(/[^a-z]/g, ''), p.position, p.nation].join('|');
+  const bestRank: Record<string, number> = {};
+  for (const p of players) { const k = normalizedKey(p); if (!bestRank[k] || (p.ranking ?? 999) < bestRank[k]) bestRank[k] = p.ranking ?? 999; }
+  const isDuplicate = (p: Player) => {
+    const k = normalizedKey(p);
+    return (p.ranking ?? 999) > bestRank[k];
+  };
+
   const filtered = players.filter(p => {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
-    // Hide abbreviated names (e.g. "L. Messi", "H. Lloris") unless user is searching
-    if (tab === 'all' && isAbbreviated(p.name)) return false;
+    // Hide duplicate entries (same surname+position+nation but worse ranking)
+    if (tab === 'all' && isDuplicate(p)) return false;
     if (searchNorm && !p.name.toLowerCase().includes(searchNorm) &&
         !p.nation.toLowerCase().includes(searchNorm) &&
         !(p.club_name ?? '').toLowerCase().includes(searchNorm)) return false;
