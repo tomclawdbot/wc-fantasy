@@ -291,3 +291,191 @@ CREATE POLICY player_notes_own ON player_notes
   ) WITH CHECK (
     manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()::UUID)
   );
+
+-- ─── make_pick ───────────────────────────────────────────────────
+-- Single-entry point for draft picks.
+-- Args: p_player_id (uuid)
+-- Enforcement: auth, turn, deadline, round_no, quota max, fillability, uniqueness
+CREATE OR REPLACE FUNCTION public.make_pick(p_player_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_manager_id UUID;
+  v_league_id UUID := '11111111-1111-1111-1111-111111111111';
+  v_draft record;
+  v_slot INTEGER;
+  v_pick_no INTEGER;
+  v_round INTEGER;
+  v_next_manager UUID;
+  v_deadline TIMESTAMPTZ;
+  v_existing INTEGER;
+  v_max_slot INTEGER;
+  v_player_pos TEXT;
+  v_pos_count INTEGER;
+  v_total_picks INTEGER;
+  v_quota INTEGER;
+  v_gk INTEGER; v_def INTEGER; v_mid INTEGER; v_fwd INTEGER;
+  v_remaining INTEGER;
+BEGIN
+  SELECT id INTO v_manager_id FROM managers WHERE user_id = auth.uid()::UUID LIMIT 1;
+  IF v_manager_id IS NULL THEN
+    RETURN '{"error": "Not a manager in this league"}'::JSONB;
+  END IF;
+
+  SELECT * INTO v_draft FROM draft_state WHERE league_id = v_league_id AND status = 'in_progress' LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN '{"error": "No active draft"}'::JSONB;
+  END IF;
+
+  IF v_draft.current_manager_id != v_manager_id THEN
+    RETURN json_build_object('error', 'Not your turn', 'current_manager', v_draft.current_manager_id::TEXT, 'your_id', v_manager_id::TEXT);
+  END IF;
+
+  IF v_draft.pick_deadline IS NOT NULL AND v_draft.pick_deadline < NOW() THEN
+    RETURN '{"error": "Pick deadline passed"}'::JSONB;
+  END IF;
+
+  SELECT position INTO v_player_pos FROM players WHERE id = p_player_id;
+  IF NOT FOUND THEN
+    RETURN '{"error": "Player not found"}'::JSONB;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM draft_picks WHERE league_id = v_league_id AND player_id = p_player_id) THEN
+    RETURN '{"error": "Player already drafted"}'::JSONB;
+  END IF;
+
+  -- FIX #4: round_no filter — check only current round
+  SELECT COUNT(*) INTO v_existing FROM draft_picks
+  WHERE manager_id = v_manager_id AND league_id = v_league_id AND round_no = v_draft.round_no;
+  IF v_existing > 0 THEN
+    RETURN '{"error": "Already picked this round"}'::JSONB;
+  END IF;
+
+  SELECT COUNT(*) INTO v_total_picks FROM draft_picks WHERE manager_id = v_manager_id;
+  IF v_total_picks >= 15 THEN
+    RETURN '{"error": "Squad full (15 players)"}'::JSONB;
+  END IF;
+
+  -- Position max quota
+  v_quota := CASE v_player_pos WHEN 'GK' THEN 2 WHEN 'DEF' THEN 5 WHEN 'MID' THEN 5 WHEN 'FWD' THEN 3 ELSE 99 END;
+  SELECT COUNT(*) INTO v_pos_count FROM rosters ro JOIN players p ON p.id = ro.player_id
+  WHERE ro.manager_id = v_manager_id AND ro.active = true AND p.position = v_player_pos;
+  IF v_pos_count >= v_quota THEN
+    RETURN json_build_object('error', v_player_pos || ' quota exceeded (max ' || v_quota || ')');
+  END IF;
+
+  -- FIX #2: Fillability check
+  SELECT
+    COUNT(CASE WHEN p.position = 'GK' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'DEF' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'MID' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'FWD' THEN 1 END)
+  INTO v_gk, v_def, v_mid, v_fwd
+  FROM rosters ro JOIN players p ON p.id = ro.player_id
+  WHERE ro.manager_id = v_manager_id AND ro.active = true;
+
+  IF v_player_pos = 'GK' THEN v_gk := v_gk + 1;
+  ELSIF v_player_pos = 'DEF' THEN v_def := v_def + 1;
+  ELSIF v_player_pos = 'MID' THEN v_mid := v_mid + 1;
+  ELSIF v_player_pos = 'FWD' THEN v_fwd := v_fwd + 1;
+  END IF;
+
+  v_remaining := 15 - (v_gk + v_def + v_mid + v_fwd);
+
+  IF v_gk + v_remaining < 2 THEN RETURN '{"error": "Pick would make GK quota unfillable"}'::JSONB; END IF;
+  IF v_def + v_remaining < 5 THEN RETURN '{"error": "Pick would make DEF quota unfillable"}'::JSONB; END IF;
+  IF v_mid + v_remaining < 5 THEN RETURN '{"error": "Pick would make MID quota unfillable"}'::JSONB; END IF;
+  IF v_fwd + v_remaining < 3 THEN RETURN '{"error": "Pick would make FWD quota unfillable"}'::JSONB; END IF;
+
+  INSERT INTO draft_picks (manager_id, player_id, pick_no, round_no, league_id, auto_pick)
+  VALUES (v_manager_id, p_player_id, v_draft.current_pick_no, v_draft.round_no, v_league_id, false)
+  ON CONFLICT DO NOTHING;
+
+  INSERT INTO rosters (manager_id, player_id, acquired_via, active)
+  VALUES (v_manager_id, p_player_id, 'draft', true)
+  ON CONFLICT (manager_id, player_id) DO UPDATE SET active = true;
+
+  v_pick_no := v_draft.current_pick_no;
+  v_round := v_draft.round_no;
+
+  IF v_pick_no >= 150 THEN
+    UPDATE draft_state SET status = 'complete' WHERE league_id = v_league_id;
+    RETURN json_build_object('ok', true, 'pick_no', v_pick_no, 'draft_complete', true);
+  END IF;
+
+  SELECT draft_slot INTO v_slot FROM managers WHERE id = v_manager_id;
+  SELECT COALESCE(MAX(draft_slot), 1) INTO v_max_slot FROM managers;
+
+  IF v_round % 2 = 1 THEN
+    IF v_slot >= v_max_slot THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = 1 LIMIT 1;
+    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot + 1 LIMIT 1; END IF;
+  ELSE
+    IF v_slot <= 1 THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_max_slot LIMIT 1;
+    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot - 1 LIMIT 1; END IF;
+  END IF;
+
+  IF v_next_manager IS NULL THEN v_next_manager := v_draft.current_manager_id; END IF;
+  v_deadline := NOW() + (v_draft.timer_seconds || ' seconds')::INTERVAL;
+
+  UPDATE draft_state SET
+    current_pick_no = v_pick_no + 1,
+    round_no = CASE WHEN (v_pick_no + 1) % 10 = 1 THEN v_round + 1 ELSE v_round END,
+    current_manager_id = v_next_manager,
+    pick_deadline = v_deadline
+  WHERE league_id = v_league_id;
+
+  RETURN json_build_object('ok', true, 'pick_no', v_pick_no, 'draft_complete', false);
+END;
+$function$;
+
+-- ─── make_transfer ─────────────────────────────────────────────
+-- Single entry point: 3-arg form (p_out_id, p_in_id, p_window_id)
+-- Writes to both transfers (ledger) and transfer_requests (audit)
+CREATE OR REPLACE FUNCTION public.make_transfer(p_out_id uuid, p_in_id uuid, p_window_id uuid DEFAULT NULL)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_manager_id UUID;
+  v_league_id UUID := '11111111-1111-1111-1111-111111111111';
+  v_count INTEGER;
+BEGIN
+  SELECT id INTO v_manager_id FROM managers WHERE user_id = auth.uid()::UUID LIMIT 1;
+  IF v_manager_id IS NULL THEN RETURN '{"error": "Not a manager"}'::JSON; END IF;
+
+  -- Verify out_player in roster
+  IF NOT EXISTS (SELECT 1 FROM rosters WHERE manager_id = v_manager_id AND player_id = p_out_id AND active = true) THEN
+    RETURN '{"error": "Player not in your roster"}'::JSON;
+  END IF;
+
+  -- Verify in_player is free agent
+  IF EXISTS (SELECT 1 FROM rosters WHERE player_id = p_in_id AND active = true) THEN
+    RETURN '{"error": "Player already owned"}'::JSON;
+  END IF;
+
+  -- Verify in_player active
+  IF NOT EXISTS (SELECT 1 FROM players WHERE id = p_in_id AND status = 'active') THEN
+    RETURN '{"error": "Player not active"}'::JSON;
+  END IF;
+
+  -- Squad must not be full
+  SELECT COUNT(*) INTO v_count FROM rosters WHERE manager_id = v_manager_id AND active = true;
+  IF v_count >= 15 THEN RETURN '{"error": "Squad full"}'::JSON; END IF;
+
+  -- Swap
+  UPDATE rosters SET active = false WHERE manager_id = v_manager_id AND player_id = p_out_id;
+  INSERT INTO rosters (manager_id, player_id, acquired_via, active) VALUES (v_manager_id, p_in_id, 'transfer', true);
+
+  -- Audit trail (transfer_requests) + ledger (transfers)
+  INSERT INTO transfer_requests (manager_id, transfer_window_id, out_player_id, in_player_id, status)
+  VALUES (v_manager_id, p_window_id, p_out_id, p_in_id, 'approved');
+
+  INSERT INTO transfers (manager_id, window_id, out_player_id, in_player_id)
+  VALUES (v_manager_id, p_window_id, p_out_id, p_in_id);
+
+  RETURN '{"ok": true}'::JSON;
+END;
+$function$;
