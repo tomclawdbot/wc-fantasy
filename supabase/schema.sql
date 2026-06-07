@@ -430,6 +430,54 @@ BEGIN
 END;
 $function$;
 
+-- ─── start_draft ─────────────────────────────────────────────
+-- Commissioner action: initialize draft and set current_manager to slot 1
+CREATE OR REPLACE FUNCTION public.start_draft()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_league_id UUID := '11111111-1111-1111-1111-111111111111';
+  v_manager_id UUID;
+  v_deadline TIMESTAMPTZ;
+  v_timer INTEGER;
+BEGIN
+  -- Verify caller is commissioner
+  SELECT m.id INTO v_manager_id
+  FROM managers m
+  WHERE m.user_id = auth.uid()::UUID AND m.is_commissioner = true
+  LIMIT 1;
+
+  IF v_manager_id IS NULL THEN
+    RETURN '{"error": "Only the commissioner can start the draft"}'::JSONB;
+  END IF;
+
+  -- Get timer setting
+  SELECT COALESCE(timer_seconds, 60) INTO v_timer FROM draft_state WHERE league_id = v_league_id;
+
+  -- First manager in snake order (slot 1 for round 1)
+  SELECT id INTO v_manager_id FROM managers WHERE draft_slot = 1 LIMIT 1;
+  IF v_manager_id IS NULL THEN
+    RETURN '{"error": "No managers found"}'::JSONB;
+  END IF;
+
+  v_deadline := NOW() + (v_timer || ' seconds')::INTERVAL;
+
+  -- Initialize / reset draft state
+  INSERT INTO draft_state (league_id, status, current_pick_no, round_no, current_manager_id, pick_deadline, timer_seconds)
+  VALUES (v_league_id, 'in_progress', 1, 1, v_manager_id, v_deadline, v_timer)
+  ON CONFLICT (league_id) DO UPDATE SET
+    status = 'in_progress',
+    current_pick_no = 1,
+    round_no = 1,
+    current_manager_id = v_manager_id,
+    pick_deadline = v_deadline;
+
+  RETURN '{"ok": true, "message": "Draft started"}'::JSONB;
+END;
+$function$;
+
 -- ─── make_transfer ─────────────────────────────────────────────
 -- Single entry point: 3-arg form (p_out_id, p_in_id, p_window_id)
 -- Writes to both transfers (ledger) and transfer_requests (audit)

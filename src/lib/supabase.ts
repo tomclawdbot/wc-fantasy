@@ -27,6 +27,8 @@ export interface Player {
   nation_flag_url?: string;
   club_name?: string;
   club_logo_url?: string;
+  owner_team_name?: string;  // populated when player is drafted
+  owner_manager_id?: string; // for the viewer's own drafted players
 }
 
 export interface Manager {
@@ -104,12 +106,55 @@ export async function makePick(playerId: string) {
 export async function getMyManager() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data } = await supabase
+
+  // First check: does this user already have a manager record?
+  const { data: existing } = await supabase
     .from('managers')
     .select('*')
     .eq('user_id', user.id)
     .single();
-  return data;
+  if (existing) return existing;
+
+  // New user — find the first empty slot (user_id IS NULL) and claim it by INSERT
+  // (UPDATE won't work due to RLS — no UPDATE policy on managers table)
+  const { data: emptySlots } = await supabase
+    .from('managers')
+    .select('id, league_id, draft_slot, team_name')
+    .is('user_id', null)
+    .order('draft_slot', { ascending: true })
+    .limit(1);
+
+  if (emptySlots && emptySlots.length > 0) {
+    const slot = emptySlots[0];
+    const leagueId = slot.league_id ?? '11111111-1111-1111-1111-111111111111';
+    // Try to INSERT a new record for this user in the empty slot's league
+    const { data: newManager, error } = await supabase
+      .from('managers')
+      .insert({
+        league_id: leagueId,
+        user_id: user.id,
+        draft_slot: slot.draft_slot,
+        team_name: slot.team_name ?? 'My Team',
+        is_commissioner: false,
+      })
+      .select()
+      .single();
+
+    if (newManager) return newManager;
+    // If INSERT failed (e.g. slot was taken concurrently), try UPDATE as fallback
+    if (error) {
+      const { data: updated } = await supabase
+        .from('managers')
+        .update({ user_id: user.id })
+        .eq('id', slot.id)
+        .select()
+        .single();
+      if (updated) return updated;
+    }
+  }
+
+  // No empty slots — league is full
+  return null;
 }
 
 export async function getMyRoster(managerId: string) {
@@ -273,12 +318,40 @@ export async function setPlayerWatched(managerId: string, playerId: string, watc
 }
 
 export async function getAllPlayers(): Promise<Player[]> {
-  const { data } = await supabase
+  // Get my manager ID for ownership highlighting
+  const { data: { user } } = await supabase.auth.getUser();
+  let myManagerId: string | null = null;
+  if (user) {
+    const { data: m } = await supabase.from('managers').select('id').eq('user_id', user.id).single();
+    myManagerId = m?.id ?? null;
+  }
+
+  // Fetch players with roster ownership via LEFT JOIN
+  const { data, error } = await supabase
     .from('players')
-    .select('*')
+    .select(`
+      *,
+      rosters!left(manager_id, active, managers!inner(id, team_name))
+    `)
     .eq('status', 'active')
     .order('ranking', { ascending: true, nullsFirst: false });
-  return data ?? [];
+
+  if (error) return [];
+
+  return (data ?? []).map((p: any) => {
+    // Find active roster entry for this player
+    const roster = p.rosters?.find((r: any) => r.active);
+    const ownerManager = roster?.managers;
+    const ownerTeamName = ownerManager?.team_name ?? null;
+
+    return {
+      ...p,
+      owner_team_name: ownerTeamName ?? undefined,
+      owner_manager_id: roster?.manager_id ?? undefined,
+      // Hide abbreviated names (e.g. "L. Messi", "H. Lloris") from main list
+      // but keep them queryable — they'll show if user specifically searches them
+    };
+  });
 }
 
 export async function getWatchedPlayers(managerId: string): Promise<Player[]> {

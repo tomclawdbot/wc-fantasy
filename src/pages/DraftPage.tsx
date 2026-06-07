@@ -132,7 +132,7 @@ export default function DraftPage() {
           </p>
         </div>
         {isMyTurn && <Timer deadline={draft?.pick_deadline ?? null} />}
-        {manager?.is_commissioner && draft?.status === 'scheduled' && (
+        {manager?.is_commissioner && (draft?.status === 'scheduled' || (draft?.status === 'in_progress' && draft?.current_pick_no === 1 && draft?.round_no === 1 && picks.length === 0)) && (
           <button className="btn-primary" onClick={async () => {
             const { data, error } = await supabase.rpc('start_draft');
             if (error) alert('Failed: ' + error.message);

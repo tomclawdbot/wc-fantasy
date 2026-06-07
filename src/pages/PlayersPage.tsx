@@ -8,8 +8,10 @@ function PlayerCard({ player, watched, onWatch, showing }: {
   onWatch: (w: boolean) => void;
   showing: 'all' | 'watchlist';
 }) {
+  const isOwned = !!player.owner_team_name;
+
   return (
-    <div className="roster-player" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12 }}>
+    <div className="roster-player" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, opacity: isOwned ? 0.75 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         {/* Player photo + badges */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -56,6 +58,12 @@ function PlayerCard({ player, watched, onWatch, showing }: {
               </span>
             )}
           </div>
+          {/* Ownership badge */}
+          {player.owner_team_name && (
+            <div style={{ marginTop: 4, fontSize: '0.65rem', color: 'var(--accent)', fontWeight: 600 }}>
+              ★ {player.owner_team_name}
+            </div>
+          )}
         </div>
 
         {/* Watch button */}
@@ -112,9 +120,12 @@ export default function PlayersPage() {
 
   // Filter + sort
   const searchNorm = search.toLowerCase().trim();
+  const isAbbreviated = (name: string) => /^[A-Z]\. [A-Z]/.test(name);
   const filtered = players.filter(p => {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
+    // Hide abbreviated names (e.g. "L. Messi", "H. Lloris") unless user is searching
+    if (tab === 'all' && isAbbreviated(p.name) && !searchNorm) return false;
     if (searchNorm && !p.name.toLowerCase().includes(searchNorm) &&
         !p.nation.toLowerCase().includes(searchNorm) &&
         !(p.club_name ?? '').toLowerCase().includes(searchNorm)) return false;
