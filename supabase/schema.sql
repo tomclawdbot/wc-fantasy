@@ -16,7 +16,8 @@ CREATE TABLE managers (
   display_name TEXT NOT NULL,
   draft_slot INTEGER CHECK (draft_slot BETWEEN 1 AND 10),
   is_commissioner BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX manager_league_user ON managers(league_id, user_id);
@@ -58,6 +59,7 @@ CREATE TABLE draft_picks (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   league_id UUID NOT NULL,
   pick_no INTEGER NOT NULL CHECK (pick_no BETWEEN 1 AND 150),
+  round_no INTEGER NOT NULL DEFAULT 0,
   manager_id UUID NOT NULL,
   player_id UUID NOT NULL,
   auto_pick BOOLEAN NOT NULL DEFAULT false,
