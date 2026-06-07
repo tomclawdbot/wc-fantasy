@@ -92,7 +92,7 @@ serve(async (req) => {
       .single();
     if (alreadyDrafted) return json({ error: 'Player already drafted' }, 409);
 
-    // Server-side quota check
+    // Server-side quota check (max + fillability)
     const quotaError = await checkQuota(db, manager.id, player.position, manager.league_id);
     if (quotaError) return json({ error: quotaError }, 400);
 
@@ -182,59 +182,38 @@ async function checkQuota(
   const QUOTA = { GK: 2, DEF: 5, MID: 5, FWD: 3 };
   const SQUAD_SIZE = 15;
 
-  const { data: roster } = await db
-    .from('rosters')
-    .select('player_id')
-    .eq('manager_id', managerId)
-    .eq('active', true);
-
+  // Count current picks for this manager
   const { data: currentPicks } = await db
     .from('draft_picks')
-    .select('player_id')
+    .select('player_id, players(position)')
     .eq('manager_id', managerId);
 
-  const count = currentPicks?.length ?? 0;
+  const posCounts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const pick of currentPicks ?? []) {
+    const pos = (pick as any).players?.position;
+    if (pos && pos in posCounts) posCounts[pos]++;
+  }
+
   const quota = QUOTA[position as keyof typeof QUOTA] ?? 99;
 
-  // Count current pos in picks (we'd need to join with players table)
-  // For now, simple check: if roster already has full quota of that position, reject
-  // Full quota check uses the already-inserted roster
-  const { count: posCount } = await db
-    .from('rosters')
-    .select('players(position)', { count: 'exact', head: true })
-    .eq('manager_id', managerId)
-    .eq('active', true);
-
-  // Simplified: check by direct count query
-  const { data: posPlayers } = await db
-    .from('rosters')
-    .select('players(position)')
-    .eq('manager_id', managerId)
-    .eq('active', true)
-    .eq('players.position', position);
-
-  if (posPlayers && posPlayers.length >= quota) {
-    return `${position} quota exceeded (${posPlayers.length}/${quota})`;
+  // FIX #2: Per-position max check
+  if ((posCounts[position] ?? 0) >= quota) {
+    return `${position} quota exceeded (${posCounts[position]}/${quota})`;
   }
 
-  // Check remaining slots can still fill all quotas
-  const remaining = SQUAD_SIZE - (count + 1);
-  // If remaining slots can't fill all positions, reject
-  const { data: allRosterPlayers } = await db
-    .from('rosters')
-    .select('players(position)')
-    .eq('manager_id', managerId)
-    .eq('active', true);
-
-  const posCounts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
-  for (const rp of allRosterPlayers ?? []) {
-    const p = (rp as any).players as { position: string } | null;
-    if (p) posCounts[p.position] = (posCounts[p.position] ?? 0) + 1;
-  }
-  posCounts[position] = (posCounts[position] ?? 0) + 1;
+  // FIX #2: Fillability check — simulate this pick and verify all quotas remain achievable
+  const newPosCounts = { ...posCounts };
+  newPosCounts[position] = (newPosCounts[position] ?? 0) + 1;
+  const remainingSlots = SQUAD_SIZE - Object.values(newPosCounts).reduce((a, b) => a + b, 0);
 
   for (const [pos, need] of Object.entries(QUOTA)) {
-    if ((posCounts[pos] ?? 0) > need) return `${pos} quota exceeded`;
+    const projectedHave = newPosCounts[pos] ?? 0;
+    // Can we still fill this quota with remaining slots?
+    const maxPossible = projectedHave + remainingSlots;
+    const fillable = maxPossible >= (need as number);
+    if (!fillable) {
+      return `Pick would make ${pos} quota unfillable (need ${need}, max possible ${maxPossible})`;
+    }
   }
 
   return null;

@@ -6,7 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const SCORING = {
+// ─── Scoring constants (SINGLE SOURCE — must match game-day/index.ts EXACTLY) ───
+const SCORE = {
   appearance: 2,
   goal: { GK: 6, DEF: 5, MID: 4, FWD: 3 },
   assist: 3,
@@ -15,19 +16,17 @@ const SCORING = {
   yellowCard: -1,
   redCard: -3,
   knockoutMultiplier: 1.5,
-};
+} as const;
 
+// ─── import-events ─────────────────────────────────────────────
+// Idempotent: recomputes match_scores from existing player_events.
+// Called by cron job to backfill/repair scores after game-day runs.
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const db = createClient(supabaseUrl, serviceKey);
-  const apiKey = Deno.env.get('API_FOOTBALL_KEY');
-
-  // Optionally: fetch new events from API-Football
-  // For now: recompute scores from existing player_events
-  // Idempotent: clears and rebuilds match_scores from player_events
 
   const { data: fixtures } = await db
     .from('fixtures')
@@ -37,7 +36,8 @@ serve(async (req) => {
   let processed = 0;
 
   for (const fixture of fixtures ?? []) {
-    // Get all events for this fixture
+    const isKnockout = ['R32', 'R16', 'QF', 'SF', 'Final'].includes(fixture.phase);
+
     const { data: events } = await db
       .from('player_events')
       .select('*, players(position)')
@@ -51,60 +51,76 @@ serve(async (req) => {
       byPlayer[pid].push(ev);
     }
 
-    // Compute score per player
     for (const [playerId, playerEvents] of Object.entries(byPlayer)) {
       const pos = (playerEvents[0] as any).players?.position ?? 'MID';
-      const isKnockout = ['R32','R16','QF','SF','Final'].includes(fixture.phase);
-
       const breakdown: Record<string, any> = {};
       let points = 0;
 
       const eventTypes = playerEvents.map((e: any) => e.event_type);
+      const eventCounts: Record<string, number> = {};
+      for (const t of eventTypes) eventCounts[t] = (eventCounts[t] ?? 0) + 1;
 
-      if (eventTypes.length > 0) {
-        const goalCount = eventTypes.filter((t: string) => t === 'goal').length;
-        if (goalCount > 0) {
-          const pts = (SCORING.goal[pos] ?? 3) * goalCount;
-          points += pts;
-          breakdown.goal = { count: goalCount, pts };
-        }
-        const assistCount = eventTypes.filter((t: string) => t === 'assist').length;
-        if (assistCount > 0) {
-          points += SCORING.assist * assistCount;
-          breakdown.assist = { count: assistCount, pts: SCORING.assist * assistCount };
-        }
-        const cleanSheet = eventTypes.includes('cleanSheet');
-        if (cleanSheet && SCORING.cleanSheet[pos]) {
-          points += SCORING.cleanSheet[pos]!;
-          breakdown.cleanSheet = { count: 1, pts: SCORING.cleanSheet[pos] };
-        }
-        const saveCount = eventTypes.filter((t: string) => t === 'save').length;
-        if (saveCount > 0) {
-          points += SCORING.save * saveCount;
-          breakdown.save = { count: saveCount, pts: SCORING.save * saveCount };
-        }
-        const yc = eventTypes.filter((t: string) => t === 'yellowCard').length;
-        if (yc > 0) {
-          points += SCORING.yellowCard * yc;
-          breakdown.yellowCard = { count: yc, pts: SCORING.yellowCard * yc };
-        }
-        const rc = eventTypes.filter((t: string) => t === 'redCard').length;
-        if (rc > 0) {
-          points += SCORING.redCard * rc;
-          breakdown.redCard = { count: rc, pts: SCORING.redCard * rc };
-        }
-        if (eventTypes.includes('appearance')) {
-          points += SCORING.appearance;
-          breakdown.appearance = { count: 1, pts: SCORING.appearance };
-        }
-        if (isKnockout) {
-          points = Math.round(points * SCORING.knockoutMultiplier);
-          breakdown.knockoutMultiplier = SCORING.knockoutMultiplier;
-        }
-        breakdown.total = points;
+      // Appearance
+      if (eventCounts['Appearance'] > 0) {
+        points += SCORE.appearance;
+        breakdown.appearance = { count: 1, pts: SCORE.appearance };
       }
 
-      // Upsert match_scores (idempotent)
+      // Goals
+      const goalCount = eventCounts['Goal'] ?? 0;
+      if (goalCount > 0) {
+        const pts = (SCORE.goal[pos as keyof typeof SCORE.goal] ?? 3) * goalCount;
+        points += pts;
+        breakdown.goal = { count: goalCount, pts };
+      }
+
+      // Assists
+      const assistCount = eventCounts['Assist'] ?? 0;
+      if (assistCount > 0) {
+        points += SCORE.assist * assistCount;
+        breakdown.assist = { count: assistCount, pts: SCORE.assist * assistCount };
+      }
+
+      // Clean sheet
+      const cleanSheetCount = eventCounts['CleanSheet'] ?? 0;
+      if (cleanSheetCount > 0 && pos in SCORE.cleanSheet) {
+        const pts = SCORE.cleanSheet[pos as keyof typeof SCORE.cleanSheet]!;
+        points += pts;
+        breakdown.cleanSheet = { count: 1, pts };
+      }
+
+      // Saves
+      const saveCount = eventCounts['SaveCount'] ?? 0;
+      if (saveCount > 0) {
+        points += SCORE.save * saveCount;
+        breakdown.save = { count: saveCount, pts: SCORE.save * saveCount };
+      }
+
+      // Yellow card
+      const yc = eventCounts['YellowCard'] ?? 0;
+      if (yc > 0) {
+        points += SCORE.yellowCard * yc;
+        breakdown.yellowCard = { count: yc, pts: SCORE.yellowCard * yc };
+      }
+
+      // Red card
+      const rc = (eventCounts['RedCard'] ?? 0) + (eventCounts['SecondYellow'] ?? 0);
+      if (rc > 0) {
+        points += SCORE.redCard * rc;
+        breakdown.redCard = { count: rc, pts: SCORE.redCard * rc };
+      }
+
+      // Knockout multiplier
+      if (isKnockout && points !== 0) {
+        const old = points;
+        points = Math.round(points * SCORE.knockoutMultiplier);
+        breakdown.knockoutMultiplier = SCORE.knockoutMultiplier;
+        breakdown.knockoutBonus = points - old;
+      }
+
+      breakdown.total = points;
+
+      // Upsert match_scores
       await db.from('match_scores').upsert({
         player_id: playerId,
         fixture_id: fixture.id,
@@ -123,7 +139,6 @@ serve(async (req) => {
 });
 
 async function recomputeStandings(db: ReturnType<typeof createClient>) {
-  // Aggregate total points per manager from match_scores
   const { data: scores } = await db
     .from('match_scores')
     .select('player_id, fixture_id, points, fixtures(phase), rosters(manager_id)')
@@ -136,7 +151,7 @@ async function recomputeStandings(db: ReturnType<typeof createClient>) {
     if (!mId) continue;
     if (!totals[mId]) totals[mId] = { total: 0, byPhase: {} };
     totals[mId].total += s.points;
-    const phase = (s as any).fixtures?.phase ?? 'Unknown';
+    const phase = (s as any).fixtures?.phase ?? 'group';
     totals[mId].byPhase[phase] = (totals[mId].byPhase[phase] ?? 0) + s.points;
   }
 
