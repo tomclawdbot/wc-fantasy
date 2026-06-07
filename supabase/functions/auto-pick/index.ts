@@ -20,7 +20,9 @@ serve(async (req) => {
     .eq('status', 'in_progress')
     .single();
 
-  if (!draft) return json({ message: 'No active draft', processed: false });
+  if (!draft) {
+    return json({ message: 'No active draft', processed: false });
+  }
 
   const { current_pick_no, current_manager_id, round_no, pick_deadline } = draft;
 
@@ -38,115 +40,91 @@ serve(async (req) => {
     .single();
 
   if (existingPick) {
-    // Already picked — advance to next pick
     await advanceDraft(db, draft);
     return json({ message: 'Already picked, advancing', processed: true });
   }
 
-  // Get best available player (lowest ranking number = best)
-  const { data: draftedIds } = await db
-    .from('draft_picks')
-    .select('player_id');
+  // Get best available player (lowest ranking = best) not yet drafted
+  const { data: draftedIds } = await db.from('draft_picks').select('player_id');
+  const drafted = new Set((draftedIds ?? []).map((p: any) => p.player_id));
 
-  let playerQuery = db
+  const { data: available } = await db
     .from('players')
-    .select('id, name, ranking')
-    .eq('status', 'active')
-    .order('ranking', { ascending: true })
-    .limit(1);
+    .select('id, name, position, nation, ranking')
+    .not('id', 'in', `(${Array.from(drafted).map((s: string) => `'${s}'`).join(',')})`)
+    .order('ranking')
+    .limit(5);
 
-  if (draftedIds && draftedIds.length > 0) {
-    const taken = draftedIds.map((p: any) => p.player_id);
-    playerQuery = playerQuery.not('id', 'in', `(${taken.join(',')})`);
+  if (!available || available.length === 0) {
+    return json({ message: 'No players available', processed: false });
   }
 
-  const { data: bestPlayer } = await playerQuery.single();
+  const player = available[0];
 
-  if (!bestPlayer) {
-    return json({ error: 'No available players' }, 400);
+  // Make the pick using the RPC
+  const { error: pickErr } = await db.rpc('make_pick', {
+    p_manager_id: current_manager_id,
+    p_player_id: player.id,
+    p_round_no: round_no,
+    p_pick_no: current_pick_no,
+  });
+
+  if (pickErr) {
+    return json({ error: pickErr.message }, 500);
   }
 
-  // Make the pick
-  const { error: pickErr } = await db.from('draft_picks').insert({
-    manager_id: current_manager_id,
-    player_id: bestPlayer.id,
-    pick_no: current_pick_no,
-    round_no,
-    league_id: draft.league_id,
-  });
-
-  // Also add to roster
-  await db.from('rosters').insert({
-    manager_id: current_manager_id,
-    player_id: bestPlayer.id,
-    acquired_via: 'auto',
-    active: true,
-  });
-
-  // Advance draft
+  // Advance draft to next manager
   await advanceDraft(db, draft);
 
   return json({
     ok: true,
-    manager_id: current_manager_id,
-    player_id: bestPlayer.id,
-    player_name: bestPlayer.name,
     pick_no: current_pick_no,
+    player: player.name,
+    position: player.position,
+    processed: true,
   });
 });
 
 async function advanceDraft(db: any, draft: any) {
-  const leagueId = draft.league_id;
-  const currentPickNo = draft.current_pick_no;
-  const currentRound = draft.round_no;
-  const currentManager = draft.current_manager_id;
+  const { current_pick_no, round_no } = draft;
+  const NUM_MANAGERS = 10;
+  const NEXT_PICK = current_pick_no + 1;
+  const NEXT_ROUND = Math.ceil(NEXT_PICK / NUM_MANAGERS) || 1;
 
-  // Get managers ordered by draft_slot
-  const { data: managers } = await db
-    .from('managers')
-    .select('id, draft_slot')
-    .order('draft_slot', { ascending: true });
-
-  const maxSlot = managers.length;
-  const currentSlot = managers.find((m: any) => m.id === currentManager)?.draft_slot ?? 1;
-
-  // Determine next slot using snake draft logic
+  // Snake draft: odd rounds go 1→10, even rounds go 10→1
+  const pickInRound = ((NEXT_PICK - 1) % NUM_MANAGERS) + 1;
   let nextSlot: number;
-  if (currentRound % 2 === 1) {
-    // Forward: 1→2→3→...→10→1
-    nextSlot = currentSlot >= maxSlot ? 1 : currentSlot + 1;
+  if (NEXT_ROUND % 2 === 1) {
+    nextSlot = pickInRound;
   } else {
-    // Reverse: 10→9→8→...→1→10
-    nextSlot = currentSlot <= 1 ? maxSlot : currentSlot - 1;
+    nextSlot = NUM_MANAGERS - pickInRound + 1;
   }
 
-  const nextManager = managers.find((m: any) => m.draft_slot === nextSlot)?.id ?? currentManager;
+  // Get manager ID for next slot
+  const { data: nextManager } = await db
+    .from('managers')
+    .select('id')
+    .eq('draft_slot', nextSlot)
+    .single();
 
-  // Check if draft is complete (30 picks = 3 rounds × 10 managers)
-  if (currentPickNo >= 30) {
-    await db.from('draft_state').update({ status: 'completed' }).eq('league_id', leagueId);
+  if (!nextManager) {
+    // Draft complete
+    await db.from('draft_state').update({ status: 'completed' }).eq('id', draft.id);
     return;
   }
 
-  // Determine next round and deadline
-  let nextRound = currentRound;
-  let deadline: string;
+  // Set deadline to 75 seconds from now
+  const deadline = new Date(Date.now() + 75 * 1000).toISOString();
 
-  if (currentPickNo % 10 === 0) {
-    nextRound = currentRound + 1;
-    deadline = new Date(Date.now() + 60 * 1000).toISOString(); // 60s per new round
-  } else {
-    deadline = new Date(Date.now() + 60 * 1000).toISOString();
-  }
-
-  await db.from('draft_state')
+  await db
+    .from('draft_state')
     .update({
-      current_pick_no: currentPickNo + 1,
-      round_no: nextRound,
-      current_manager_id: nextManager,
+      current_pick_no: NEXT_PICK,
+      round_no: NEXT_ROUND,
+      current_manager_id: nextManager.id,
       pick_deadline: deadline,
     })
-    .eq('league_id', leagueId);
+    .eq('id', draft.id);
 }
 
 function json(data: any, status = 200) {
