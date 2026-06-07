@@ -125,7 +125,7 @@ export default function PlayersPage() {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
     // Hide abbreviated names (e.g. "L. Messi", "H. Lloris") unless user is searching
-    if (tab === 'all' && isAbbreviated(p.name) && !searchNorm) return false;
+    if (tab === 'all' && isAbbreviated(p.name)) return false;
     if (searchNorm && !p.name.toLowerCase().includes(searchNorm) &&
         !p.nation.toLowerCase().includes(searchNorm) &&
         !(p.club_name ?? '').toLowerCase().includes(searchNorm)) return false;
