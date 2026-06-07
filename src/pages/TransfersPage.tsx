@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getMyRoster, getTransferWindows, getFreeAgents, type Roster, type TransferWindow, type Player } from '../lib/supabase';
+import { getMyManager, getMyRoster, getTransferWindows, getFreeAgents, supabase, type Roster, type TransferWindow, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.REACT_APP_SUPABASE_URL ?? '';
 
 export default function TransfersPage() {
   const navigate = useNavigate();
@@ -42,13 +43,22 @@ export default function TransfersPage() {
     if (outId === inId) { setError('Cannot transfer same player'); return; }
     setError('');
     setSubmitting(true);
-    const { error: err } = await supabase.rpc('transfer_player', {
-      p_out_id: outId,
-      p_in_id: inId,
-      p_window_id: openWindow?.id,
+    setError('');
+    setSubmitting(true);
+    // Call edge function directly with user's auth token
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token ?? '';
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/transfer-player`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ p_out_id: outId, p_in_id: inId, p_window_id: openWindow?.id }),
     });
+    const result = await resp.json();
     setSubmitting(false);
-    if (err) { setError(err.message); }
+    if (result.error) { setError(result.error); }
     else { setSuccess('Transfer complete!'); setOutId(''); setInId(''); load(); }
   };
 
