@@ -253,3 +253,39 @@ export function subscribeToStandings(onUpdate: () => void) {
   channel.subscribe();
   return () => supabase.removeChannel(channel);
 }
+export async function getPlayerNotes(managerId: string): Promise<Record<string, { watched: boolean; note: string }>> {
+  const { data } = await supabase
+    .from('player_notes')
+    .select('player_id, watched, note')
+    .eq('manager_id', managerId);
+  return Object.fromEntries((data ?? []).map(r => [r.player_id, { watched: r.watched, note: r.note ?? '' }]));
+}
+
+export async function setPlayerWatched(managerId: string, playerId: string, watched: boolean, note?: string): Promise<void> {
+  await supabase.from('player_notes').upsert({
+    manager_id: managerId,
+    player_id: playerId,
+    watched,
+    note: note ?? null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'manager_id,player_id' });
+}
+
+export async function getAllPlayers(): Promise<Player[]> {
+  const { data } = await supabase
+    .from('players')
+    .select('*')
+    .eq('status', 'active')
+    .order('ranking', { ascending: true, nullsFirst: false });
+  return data ?? [];
+}
+
+export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
+  const { data } = await supabase
+    .from('player_notes')
+    .select('player_id, players(*)')
+    .eq('manager_id', managerId)
+    .eq('watched', true)
+    .eq('players.status', 'active');
+  return (data ?? []).map(r => r.players as unknown as Player).filter(Boolean);
+}

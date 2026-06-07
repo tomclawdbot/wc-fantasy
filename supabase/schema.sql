@@ -268,3 +268,26 @@ CREATE POLICY transfers_read ON transfers FOR SELECT USING (manager_id IN (SELEC
 CREATE POLICY players_read ON players FOR SELECT USING (true);
 CREATE POLICY standings_read ON standings FOR SELECT USING (manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()));
 CREATE POLICY match_scores_read ON match_scores FOR SELECT USING (true);
+-- Player research / watchlist
+CREATE TABLE IF NOT EXISTS player_notes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  manager_id UUID NOT NULL REFERENCES managers(id) ON DELETE CASCADE,
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  watched BOOLEAN NOT NULL DEFAULT false,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(manager_id, player_id)
+);
+
+CREATE INDEX player_notes_manager ON player_notes(manager_id);
+CREATE INDEX player_notes_watched ON player_notes(manager_id, watched);
+
+ALTER TABLE player_notes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY player_notes_own ON player_notes
+  FOR ALL USING (
+    manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()::UUID)
+  ) WITH CHECK (
+    manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()::UUID)
+  );

@@ -9,6 +9,7 @@ import HomePage from './pages/HomePage';
 import DraftPage from './pages/DraftPage';
 import TeamPage from './pages/TeamPage';
 import TransfersPage from './pages/TransfersPage';
+import PlayersPage from './pages/PlayersPage';
 import StandingsPage from './pages/StandingsPage';
 import LoginPage from './pages/LoginPage';
 import AuthCallback from './pages/AuthCallback';
@@ -33,6 +34,7 @@ function NavBar() {
     { to: '/team', label: 'Team' },
     { to: '/transfers', label: 'Transfers' },
     { to: '/standings', label: 'Standings' },
+    { to: '/players', label: 'Players' },
   ];
 
   return (
@@ -56,6 +58,7 @@ export default function App() {
           <Route path="/draft" element={<DraftPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/transfers" element={<TransfersPage />} />
+          <Route path="/players" element={<PlayersPage />} />
           <Route path="/standings" element={<StandingsPage />} />
           <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
