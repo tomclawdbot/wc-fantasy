@@ -93,7 +93,7 @@ export async function startDraft() {
 }
 
 export async function makePick(playerId: string) {
-  return supabase.rpc('make_pick', { player_id: playerId });
+  return supabase.rpc('make_pick', { p_player_id: playerId });
 }
 
 export async function getMyManager() {
