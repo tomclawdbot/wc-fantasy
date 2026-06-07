@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getMyManager, getDraftState, getDraftPicks, getAvailablePlayers,
@@ -55,6 +55,7 @@ export default function DraftPage() {
   const navigate = useNavigate();
   const [manager, setManager] = useState<any>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
+  const QUOTA = { GK: 2, DEF: 5, MID: 5, FWD: 3 };
   const [picks, setPicks] = useState<DraftPick[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [queue, setQueue] = useState<any[]>([]);
@@ -64,6 +65,7 @@ export default function DraftPage() {
   const [pickError, setPickError] = useState('');
   const [showQueue, setShowQueue] = useState(false);
   const [queueEdit, setQueueEdit] = useState<string[]>([]);
+  const autoPickingRef = useRef(false);
 
   const SNAKE = getSnakeOrder();
 
@@ -75,23 +77,53 @@ export default function DraftPage() {
   const myPicks = picks.filter(p => p.managers?.draft_slot === mySlot);
   const countPos = (pos: string) => myPicks.filter(p => p.players?.position === pos).length;
 
+  // Count my roster by position
+  const myPicks = picks.filter(p => p.managers?.draft_slot === mySlot);
+  const countPos = (pos: string) => myPicks.filter(p => p.players?.position === pos).length;
+
+  // Auto-pick: check deadline + make pick server-side (no auth needed for service key)
+  const checkAndAutoPick = useCallback(async (draftState: DraftState, existingPicks: DraftPick[]) => {
+    if (!draftState || draftState.status !== 'in_progress' || autoPickingRef.current) return;
+    const deadline = draftState.pick_deadline ? new Date(draftState.pick_deadline) : null;
+    if (!deadline || deadline > new Date()) return; // Not yet overdue
+    const pickNo = draftState.current_pick_no;
+    const roundNo = draftState.round_no;
+    // Already picked this round?
+    if (existingPicks.some(p => p.pick_no === pickNo && p.round_no === roundNo)) return;
+    autoPickingRef.current = true;
+    try {
+      const { data: result, error } = await supabase.rpc('auto_pick', {
+        p_league_id: draftState.league_id,
+        p_manager_id: draftState.current_manager_id,
+        p_pick_no: pickNo,
+        p_round_no: roundNo
+      });
+      if (error) console.error('Auto-pick error:', error.message);
+      else if (result) fetchAll();
+    } catch (e) { console.error(e); }
+    finally { setTimeout(() => { autoPickingRef.current = false; }, 2000); }
+  }, [fetchAll]);
+
   const fetchAll = useCallback(async () => {
     const [m, d, p, pl, q] = await Promise.all([
       getMyManager(), getDraftState(), getDraftPicks(), getAvailablePlayers(), getMyQueue(manager?.id ?? '')
     ]);
     if (!m) { navigate('/login'); return; }
-    setManager(m);
-    setDraft(d);
-    setPicks(p);
-    setPlayers(pl);
+    setManager(m); setDraft(d); setPicks(p); setPlayers(pl);
     if (q.length > 0 && queueEdit.length === 0) setQueueEdit(q.map((e: any) => e.player_id));
     setLoading(false);
-  }, [navigate, manager?.id]);
+    // Check auto-pick immediately after loading draft state
+    if (d) checkAndAutoPick(d, p);
+  }, [navigate, manager?.id, queueEdit.length, checkAndAutoPick]);
 
   useEffect(() => {
     fetchAll();
     const unsub = subscribeToDraft(fetchAll);
-    return () => { unsub(); };
+    // Backup: poll every 5s for deadline
+    const pollInterval = setInterval(() => {
+      if (draft && picks.length >= 0) checkAndAutoPick(draft, picks);
+    }, 5000);
+    return () => { unsub(); clearInterval(pollInterval); };
   }, [fetchAll]);
 
   const handlePick = async () => {

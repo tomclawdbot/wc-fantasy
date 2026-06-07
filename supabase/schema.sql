@@ -430,6 +430,108 @@ BEGIN
 END;
 $function$;
 
+-- ─── auto_pick ─────────────────────────────────────────────
+-- Called by DraftPage when deadline has passed. Locks draft_state, picks best available player.
+CREATE OR REPLACE FUNCTION public.auto_pick(p_league_id UUID, p_manager_id UUID, p_pick_no INTEGER, p_round_no INTEGER)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_draft draft_state%ROWTYPE;
+  v_player RECORD;
+  v_slot INTEGER;
+  v_max_slot INTEGER;
+  v_next_manager UUID;
+  v_deadline TIMESTAMPTZ;
+  v_timer_secs INTEGER DEFAULT 60;
+  v_gk INTEGER; v_def INTEGER; v_mid INTEGER; v_fwd INTEGER;
+  v_remaining INTEGER;
+  v_quota INTEGER;
+  v_pos_count INTEGER;
+  v_player_pos TEXT;
+  v_players_added INTEGER;
+BEGIN
+  SELECT * INTO v_draft FROM draft_state
+  WHERE league_id = p_league_id AND status = 'in_progress'
+  FOR UPDATE NOWAIT;
+
+  IF v_draft.pick_deadline > NOW() THEN RETURN json_build_object('skipped', true, 'reason', 'deadline not passed'); END IF;
+  IF v_draft.current_pick_no != p_pick_no OR v_draft.round_no != p_round_no THEN
+    RETURN json_build_object('skipped', true, 'reason', 'pick_no mismatch');
+  END IF;
+  IF v_draft.current_manager_id != p_manager_id THEN
+    RETURN json_build_object('skipped', true, 'reason', 'manager mismatch');
+  END IF;
+  IF EXISTS (SELECT 1 FROM draft_picks WHERE league_id = p_league_id AND pick_no = p_pick_no AND round_no = p_round_no) THEN
+    RETURN json_build_object('skipped', true, 'reason', 'already picked');
+  END IF;
+
+  SELECT draft_slot INTO v_slot FROM managers WHERE id = p_manager_id;
+
+  SELECT
+    COUNT(CASE WHEN p.position = 'GK' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'DEF' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'MID' THEN 1 END),
+    COUNT(CASE WHEN p.position = 'FWD' THEN 1 END)
+  INTO v_gk, v_def, v_mid, v_fwd
+  FROM draft_picks dp JOIN players p ON p.id = dp.player_id
+  WHERE dp.manager_id = p_manager_id;
+
+  FOR v_player IN
+    SELECT id, name, position FROM players
+    WHERE status = 'active'
+      AND id NOT IN (SELECT player_id FROM draft_picks WHERE league_id = p_league_id)
+    ORDER BY ranking
+  LOOP
+    v_player_pos := v_player.position;
+    v_quota := CASE v_player_pos WHEN 'GK' THEN 2 WHEN 'DEF' THEN 5 WHEN 'MID' THEN 5 WHEN 'FWD' THEN 3 ELSE 99 END;
+    v_pos_count := CASE v_player_pos WHEN 'GK' THEN v_gk WHEN 'DEF' THEN v_def WHEN 'MID' THEN v_mid WHEN 'FWD' THEN v_fwd ELSE 0 END;
+    CONTINUE WHEN v_pos_count >= v_quota;
+    v_remaining := 15 - (v_gk + v_def + v_mid + v_fwd);
+    CONTINUE WHEN CASE v_player_pos WHEN 'GK' THEN v_gk + v_remaining < 2 WHEN 'DEF' THEN v_def + v_remaining < 5 WHEN 'MID' THEN v_mid + v_remaining < 5 WHEN 'FWD' THEN v_fwd + v_remaining < 3 ELSE false END;
+
+    INSERT INTO draft_picks (league_id, manager_id, player_id, pick_no, round_no, auto_pick)
+    VALUES (p_league_id, p_manager_id, v_player.id, p_pick_no, p_round_no, true)
+    ON CONFLICT DO NOTHING;
+    INSERT INTO rosters (manager_id, player_id, acquired_via, active)
+    VALUES (p_manager_id, v_player.id, 'draft', true)
+    ON CONFLICT (manager_id, player_id) DO UPDATE SET active = true;
+    v_players_added := 1;
+    EXIT;
+  END LOOP;
+
+  IF v_players_added IS NULL THEN RETURN json_build_object('error', 'No available player found'); END IF;
+
+  SELECT COALESCE(MAX(draft_slot), 1) INTO v_max_slot FROM managers;
+  IF p_round_no % 2 = 1 THEN
+    IF v_slot >= v_max_slot THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = 1 LIMIT 1;
+    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot + 1 LIMIT 1; END IF;
+  ELSE
+    IF v_slot <= 1 THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_max_slot LIMIT 1;
+    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot - 1 LIMIT 1; END IF;
+  END IF;
+
+  IF v_next_manager IS NULL THEN v_next_manager := p_manager_id; END IF;
+  IF v_draft.timer_seconds IS NOT NULL THEN v_timer_secs := v_draft.timer_seconds; END IF;
+  v_deadline := NOW() + (v_timer_secs || ' seconds')::INTERVAL;
+
+  IF p_pick_no >= 150 THEN
+    UPDATE draft_state SET status = 'complete' WHERE league_id = p_league_id;
+    RETURN json_build_object('ok', true, 'pick_no', p_pick_no, 'draft_complete', true);
+  END IF;
+
+  UPDATE draft_state SET
+    current_pick_no = p_pick_no + 1,
+    round_no = CASE WHEN (p_pick_no + 1) % 10 = 1 THEN p_round_no + 1 ELSE p_round_no END,
+    current_manager_id = v_next_manager,
+    pick_deadline = v_deadline
+  WHERE league_id = p_league_id;
+
+  RETURN json_build_object('ok', true, 'pick_no', p_pick_no, 'player_id', v_player.id, 'player_name', v_player.name, 'draft_complete', false);
+END;
+$function$;
+
 -- ─── start_draft ─────────────────────────────────────────────
 -- Commissioner action: initialize draft and set current_manager to slot 1
 CREATE OR REPLACE FUNCTION public.start_draft()
