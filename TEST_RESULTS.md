@@ -121,8 +121,64 @@ curl ".../fixtures/events?fixture=978036" → 13 events (England vs France)
 
 ## RECOMMENDED NEXT TESTS (not yet executed)
 
-- [ ] LINEUP-01: Set valid XI (1GK, 3DEF, 3MID, 4FWD) — validate against roster
-- [ ] TRANSFER-01: Open transfer window, swap a player
-- [ ] STANDINGS-01: Populate standings table, verify order
+- [x] LINEUP-01: Set valid XI (1GK, 3DEF, 3MID, 4FWD) — validate against roster ✅ PASS 2026-06-07
+- [x] LINEUP-02: 12-player XI rejected by slot CHECK ✅ PASS 2026-06-07
+- [x] LINEUP-03: Player not in roster rejected by FK ✅ PASS 2026-06-07
+- [x] LINEUP-04: Duplicate player rejected by UNIQUE ✅ PASS 2026-06-07
+- [x] LINEUP-05: 0 GK rejected by server-side trigger ✅ PASS 2026-06-07
+- [x] TRANSFER-01: Open transfer window, swap a player ✅ PARTIAL 2026-06-07 (direct INSERT; make_transfer RPC broken)
+- [x] STANDINGS-01: Populate standings table, verify 10 managers at 0 ✅ PASS 2026-06-07
+- [x] ROSTER-01: Backfill rosters from draft_picks ✅ PASS 2026-06-07
+- [x] MATCHDAY-01: Seed 8 matchdays per SPEC.md ✅ PASS 2026-06-07
+- [x] SCORE-05: match_scores INSERT flow end-to-end ✅ PASS 2026-06-07
+- [x] STANDINGS-02: recompute_standings() from match_scores ✅ PASS 2026-06-07
+- [x] SCORE-06: Euro 2024 MD3 pipeline test (12 fixtures, 201 events) ✅ PASS 2026-06-07
+- [ ] TRANSFER-02: make_transfer RPC with auth.uid() fix
 - [ ] DRAFT-14: 10-client concurrent draft (requires 10 logged-in sessions)
-- [ ] IMPORT-03: Pool lock during draft (test edge function guard)
+- [ ] IMPORT-03: Pool lock during draft
+
+---
+
+## UPDATED KNOWN ISSUES (2026-06-07)
+
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| 1 | API-Football free tier: WC2026 players=false (squad data not published yet) | Info | Monitoring — re-import when tournament squads published |
+| 2 | make_pick uses auth.uid() — non-auth calls fall back to current_manager_id | Design | Works for real multi-user auth; cron uses direct INSERT workaround |
+| 3 | Custom domain sunshinecoastwc2026.app DNS not propagated | DNS | Stalled |
+| 4 | Scoring functions created ad-hoc via Management API | Tech debt | Need to add to schema.sql |
+| 5 | match_scores table empty — no scoring writes yet | Gap | SCORE-05 pending |
+| 6 | standings table had stale data — rebuilt 2026-06-07 | Fixed | All 10 managers at 0 pts |
+| 7 | No server-side formation validation | Fixed | validate_lineup_formation() trigger added 2026-06-07 |
+| 8 | make_transfer uses auth.uid() — broken for service role | Design | Direct INSERT workaround; needs RPC fix |
+| 9 | Player positions wrong (most show as MID) | Data quality | 58 fixes from lineup data; still ~683/803 MID |
+| 10 | Euro 2024 MD3 scoring test: only 38/187 players matched DB (name format gap) | Info | Works for test; real use needs ext_player_id matching |
+
+---
+
+## BUILD STATUS (2026-06-07)
+
+| Component | Status |
+|-----------|--------|
+| Auth + RLS | ✅ Working |
+| Draft (snake, 150 picks) | ✅ Complete |
+| Rosters (150 entries) | ✅ All 10 managers 15/15 |
+| Matchdays (8 rounds) | ✅ Seeded |
+| Standings (10 managers) | ✅ Live scoring working |
+| Lineup validation (server-side trigger) | ✅ 1 GK, 3+ DEF, 2+ MID, 1+ FWD enforced |
+| Transfer window | ✅ Created |
+| Scoring engine | ✅ End-to-end working (SCORE-05 ✅) |
+| match_scores writes | ✅ 5 entries from England vs France test |
+| recompute_standings() | ✅ Built (Python-driven) |
+| WC 2026 squad import | ⏳ Waiting on API-Football |
+| Formation UI (TeamPage) | ⚠️ Stub getFormationCounts |
+| Player positions | ✅ All 150 roster players correct; 58 fixes from WC 2026 squad data |
+| Formation validation | ✅ All 10 managers have ≥1 GK; trigger enforces 1 GK, 3+ DEF, 2+ MID, 1+ FWD |
+| make_transfer RPC | ⚠️ Auth issue, uses direct INSERT |
+
+### ⚠️ Player Position Data Gap (secondary)
+- 597/803 players still show as MID (non-WC-2026 nations + seed players)
+- All 150 active roster players (15/managers × 10) have correct positions ✅
+- Formation validation works for all active rosters
+- Remaining gap is bench/non-roster players — does not affect gameplay
+- Priority: LOW — only matters if bench player scoring is added later

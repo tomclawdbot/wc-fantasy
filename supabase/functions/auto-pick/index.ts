@@ -61,12 +61,9 @@ serve(async (req) => {
 
   const player = available[0];
 
-  // Make the pick using the RPC
+  // Make the pick using the RPC (only takes player_id)
   const { error: pickErr } = await db.rpc('make_pick', {
-    p_manager_id: current_manager_id,
     p_player_id: player.id,
-    p_round_no: round_no,
-    p_pick_no: current_pick_no,
   });
 
   if (pickErr) {
@@ -109,7 +106,7 @@ async function advanceDraft(db: any, draft: any) {
 
   if (!nextManager) {
     // Draft complete
-    await db.from('draft_state').update({ status: 'completed' }).eq('id', draft.id);
+    await db.from('draft_state').update({ status: 'complete' }).eq('id', draft.id);
     return;
   }
 

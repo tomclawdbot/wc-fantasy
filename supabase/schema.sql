@@ -35,6 +35,10 @@ CREATE TABLE players (
   position TEXT NOT NULL CHECK (position IN ('GK','DEF','MID','FWD')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','withdrawn')),
   ranking INTEGER,
+  photo_url TEXT,        -- Player headshot from API-Football
+  nation_flag_url TEXT,  -- National team crest or flagcdn.com URL
+  club_name TEXT,        -- Player's current club team name
+  club_logo_url TEXT,    -- Player's current club crest URL
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

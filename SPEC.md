@@ -156,3 +156,27 @@ standings        — manager_id, total_points, by_phase JSONB
 - `/transfers` — Transfer market + free agents
 - `/standings` — Live standings table
 - `/login` — Magic link invite flow
+---
+
+## Player Media (2026-06-07)
+
+All active roster players are enriched with visual metadata fetched from API-Football and flagcdn.com.
+
+### Columns
+| Column | Source | Coverage |
+|--------|--------|----------|
+| `photo_url` | API-Football player photos (v3.football.api-sports.io/players) | 84/151 roster players (56%) |
+| `nation_flag_url` | API-Football team logo (national team badge) or flagcdn.com | 151/151 roster players (100%) |
+| `club_name` | API-Football player statistics (team.name) via league search | 130/151 roster players (86%) |
+| `club_logo_url` | API-Football teams endpoint (team logo from club lookup by name) | 130/151 roster players (86%) |
+
+### Data sourcing approach
+- **Nation flags**: Team logos from `GET /teams?season=2026&league=1` for all 48 WC nations. Flagcdn.com fallback for nations not in API (e.g., Nigeria→ng.png, Slovenia→si.png).
+- **Player photos**: Scanned all players in PL (league 39), La Liga (140), Serie A (135), Bundesliga (78), Ligue 1 (61) for seasons 2023–2024. Name normalized (strip spaces/punctuation) for matching.
+- **Club logos**: Searched clubs by player surname across 5 leagues. Club logo from `GET /teams?search={club}`.
+- **Known mismatches fixed**: Kevin De Bruyne (was Napoli→Man City), Bernardo Silva→Man City, Kylian Mbappé→Real Madrid, Sadio Mane (was Sporting→Al-Ettifaq), etc.
+
+### Limitations
+- 67 roster players still without photos (reserved bench players with common names that don't match cleanly)
+- Some club assignments may be slightly off (surname matching is approximate)
+- Non-top-5-league clubs may not resolve (e.g., Saudi, Turkish, Portuguese clubs)

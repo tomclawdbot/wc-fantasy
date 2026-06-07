@@ -6,8 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const API_FOOTBALL_KEY = '91fc33f112c3e00de11c9060d6c9de18';
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -18,12 +16,15 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const apiKey = Deno.env.get('API_FOOTBALL_KEY');
+  if (!apiKey) return json({ error: 'API_FOOTBALL_KEY env not set' }, 500);
+
   const db = createClient(supabaseUrl, serviceKey);
 
   // Fetch events from API-Football
   const eventsResp = await fetch(
     `https://v3.football.api-sports.io/fixtures/events?fixture=${ext_fixture_id}`,
-    { headers: { 'x-apisports-key': API_FOOTBALL_KEY } }
+    { headers: { 'x-apisports-key': apiKey } }
   );
   const eventsData = await eventsResp.json();
   const events: any[] = eventsData.response ?? [];
@@ -40,6 +41,7 @@ serve(async (req) => {
     .single();
 
   const phase = fixture?.phase ?? 'group';
+  const fixtureDbId = fixture?.id ?? null;
 
   // Event type mapping
   const eventTypeMap: Record<string, string> = {
@@ -64,7 +66,6 @@ serve(async (req) => {
   }
 
   let imported = 0;
-  // Use (player_id, event_type, minute) as dedup key since API event IDs are unreliable
   const seen = new Set<string>();
 
   for (const event of events) {
@@ -101,14 +102,14 @@ serve(async (req) => {
 
     if (!playerDbId) continue;
 
-    // Deduplicate by (player, type, minute)
     const dedupKey = `${playerDbId}-${mappedType}-${minute}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
 
+    // Idempotent insert into player_events
     const { error } = await db.from('player_events').insert({
       player_id: playerDbId,
-      fixture_id: fixture?.id ?? ext_fixture_id,
+      fixture_id: fixtureDbId,
       ext_event_id: String(event.id ?? `${apiPlayerId}-${minute}`),
       event_type: mappedType,
       minute,
@@ -117,14 +118,16 @@ serve(async (req) => {
     if (!error) imported++;
   }
 
-  if (imported > 0) {
-    await computeAndUpdateStandings(db, fixture?.id ?? ext_fixture_id, phase);
+  if (imported > 0 && fixtureDbId) {
+    await computeAndUpdateStandings(db, fixtureDbId, phase);
   }
 
   return json({ ok: true, events_imported: imported, events_total: events.length });
 });
 
 async function computeAndUpdateStandings(db: any, fixtureId: string, phase: string) {
+  // Read events that belong to this fixture (via ext_event_id pattern)
+  // Use player_events filtered by fixture_id
   const { data: events } = await db
     .from('player_events')
     .select('player_id, event_type, minute')
@@ -142,7 +145,12 @@ async function computeAndUpdateStandings(db: any, fixtureId: string, phase: stri
     playerMgrMap[r.player_id] = r.manager_id;
   }
 
-  const managerPoints: Record<string, number> = {};
+  // Collect all (player, event, minute) → points, then upsert match_scores
+  const matchScoreRows: Array<{
+    player_id: string; fixture_id: string; points: number;
+    breakdown: object; manager_id: string;
+  }> = [];
+
   for (const event of events) {
     const pid = event.player_id;
     const managerId = playerMgrMap[pid];
@@ -156,7 +164,40 @@ async function computeAndUpdateStandings(db: any, fixtureId: string, phase: stri
       p_phase: phase,
     });
     const pts = scoreData ?? 0;
-    managerPoints[managerId] = (managerPoints[managerId] ?? 0) + Number(pts);
+
+    matchScoreRows.push({
+      player_id: pid,
+      fixture_id: fixtureId,
+      points: Number(pts),
+      breakdown: { phase, minute: event.minute, event_type: event.event_type },
+      manager_id: managerId,
+    });
+  }
+
+  // Upsert match_scores (idempotent — ON CONFLICT DO UPDATE points)
+  if (matchScoreRows.length > 0) {
+    for (const row of matchScoreRows) {
+      await db.from('match_scores').upsert({
+        player_id: row.player_id,
+        fixture_id: row.fixture_id,
+        manager_id: row.manager_id,
+        points: row.points,
+        breakdown: row.breakdown,
+      }, {
+        onConflict: 'player_id,fixture_id',
+      });
+    }
+  }
+
+  // Update standings from match_scores totals (idempotent)
+  const { data: scoreTotals } = await db
+    .from('match_scores')
+    .select('manager_id, points')
+    .eq('fixture_id', fixtureId);
+
+  const managerPoints: Record<string, number> = {};
+  for (const row of scoreTotals ?? []) {
+    managerPoints[row.manager_id] = (managerPoints[row.manager_id] ?? 0) + Number(row.points);
   }
 
   for (const [managerId, roundPts] of Object.entries(managerPoints)) {
