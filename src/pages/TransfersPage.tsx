@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getMyRoster, getTransferWindows, getAvailablePlayers, type Roster, type TransferWindow, type Player } from '../lib/supabase';
+import { getMyManager, getMyRoster, getTransferWindows, getFreeAgents, type Roster, type TransferWindow, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
@@ -23,7 +23,7 @@ export default function TransfersPage() {
     const [r, w, fa] = await Promise.all([
       getMyRoster(m.id),
       getTransferWindows(),
-      getAvailablePlayers()
+      getFreeAgents()
     ]);
     setRoster(r);
     setWindows(w);

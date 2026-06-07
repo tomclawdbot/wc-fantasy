@@ -154,6 +154,23 @@ export async function getAvailablePlayers() {
   return data ?? [];
 }
 
+export async function getFreeAgents() {
+  // Players not in any active roster — available for transfer
+  const { data } = await supabase
+    .from('players')
+    .select('*')
+    .eq('status', 'active')
+    .order('ranking', { ascending: true });
+  if (!data) return [];
+  // Filter client-side against owned players
+  const { data: owned } = await supabase
+    .from('rosters')
+    .select('player_id')
+    .eq('active', true);
+  const ownedIds = new Set((owned ?? []).map(r => r.player_id));
+  return data.filter(p => !ownedIds.has(p.id));
+}
+
 export async function getMyQueue(managerId: string) {
   const { data } = await supabase
     .from('pick_queues')
