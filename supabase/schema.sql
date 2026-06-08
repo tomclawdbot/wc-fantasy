@@ -292,26 +292,43 @@ CREATE POLICY player_notes_own ON player_notes
     manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()::UUID)
   );
 
+-- ─── slot_for_pick ───────────────────────────────────────────────
+-- Canonical snake mapping: pick_no -> draft_slot (10 managers).
+-- Round = ceil(pick_no/10); odd rounds ascend 1..10, even rounds descend 10..1.
+-- Single source of truth for draft order, used by make_pick and auto_pick.
+CREATE OR REPLACE FUNCTION public.slot_for_pick(p_pick_no INTEGER, p_num_managers INTEGER DEFAULT 10)
+RETURNS INTEGER
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN (CEIL(p_pick_no::NUMERIC / p_num_managers)::INTEGER) % 2 = 1
+      THEN ((p_pick_no - 1) % p_num_managers) + 1
+    ELSE p_num_managers - ((p_pick_no - 1) % p_num_managers)
+  END;
+$$;
+
 -- ─── make_pick ───────────────────────────────────────────────────
 -- Single-entry point for draft picks.
 -- Args: p_player_id (uuid)
 -- Enforcement: auth, turn, deadline, round_no, quota max, fillability, uniqueness
+-- Advance: next slot derived from slot_for_pick(next_pick); row-locked via FOR UPDATE.
 CREATE OR REPLACE FUNCTION public.make_pick(p_player_id uuid)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 DECLARE
   v_manager_id UUID;
   v_league_id UUID := '11111111-1111-1111-1111-111111111111';
-  v_draft record;
-  v_slot INTEGER;
+  v_draft draft_state%ROWTYPE;
   v_pick_no INTEGER;
   v_round INTEGER;
+  v_next_pick INTEGER;
+  v_next_slot INTEGER;
   v_next_manager UUID;
   v_deadline TIMESTAMPTZ;
   v_existing INTEGER;
-  v_max_slot INTEGER;
   v_player_pos TEXT;
   v_pos_count INTEGER;
   v_total_picks INTEGER;
@@ -324,7 +341,8 @@ BEGIN
     RETURN '{"error": "Not a manager in this league"}'::JSONB;
   END IF;
 
-  SELECT * INTO v_draft FROM draft_state WHERE league_id = v_league_id AND status = 'in_progress' LIMIT 1;
+  -- Lock draft row to serialize against concurrent picks/auto-picks
+  SELECT * INTO v_draft FROM draft_state WHERE league_id = v_league_id AND status = 'in_progress' FOR UPDATE;
   IF NOT FOUND THEN
     RETURN '{"error": "No active draft"}'::JSONB;
   END IF;
@@ -346,7 +364,6 @@ BEGIN
     RETURN '{"error": "Player already drafted"}'::JSONB;
   END IF;
 
-  -- FIX #4: round_no filter — check only current round
   SELECT COUNT(*) INTO v_existing FROM draft_picks
   WHERE manager_id = v_manager_id AND league_id = v_league_id AND round_no = v_draft.round_no;
   IF v_existing > 0 THEN
@@ -358,7 +375,6 @@ BEGIN
     RETURN '{"error": "Squad full (15 players)"}'::JSONB;
   END IF;
 
-  -- Position max quota
   v_quota := CASE v_player_pos WHEN 'GK' THEN 2 WHEN 'DEF' THEN 5 WHEN 'MID' THEN 5 WHEN 'FWD' THEN 3 ELSE 99 END;
   SELECT COUNT(*) INTO v_pos_count FROM rosters ro JOIN players p ON p.id = ro.player_id
   WHERE ro.manager_id = v_manager_id AND ro.active = true AND p.position = v_player_pos;
@@ -366,7 +382,6 @@ BEGIN
     RETURN json_build_object('error', v_player_pos || ' quota exceeded (max ' || v_quota || ')');
   END IF;
 
-  -- FIX #2: Fillability check
   SELECT
     COUNT(CASE WHEN p.position = 'GK' THEN 1 END),
     COUNT(CASE WHEN p.position = 'DEF' THEN 1 END),
@@ -405,23 +420,17 @@ BEGIN
     RETURN json_build_object('ok', true, 'pick_no', v_pick_no, 'draft_complete', true);
   END IF;
 
-  SELECT draft_slot INTO v_slot FROM managers WHERE id = v_manager_id;
-  SELECT COALESCE(MAX(draft_slot), 1) INTO v_max_slot FROM managers;
-
-  IF v_round % 2 = 1 THEN
-    IF v_slot >= v_max_slot THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = 1 LIMIT 1;
-    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot + 1 LIMIT 1; END IF;
-  ELSE
-    IF v_slot <= 1 THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_max_slot LIMIT 1;
-    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot - 1 LIMIT 1; END IF;
-  END IF;
-
+  -- Canonical advance: next slot derived purely from next pick number
+  v_next_pick := v_pick_no + 1;
+  v_next_slot := public.slot_for_pick(v_next_pick);
+  SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_next_slot LIMIT 1;
   IF v_next_manager IS NULL THEN v_next_manager := v_draft.current_manager_id; END IF;
+
   v_deadline := NOW() + (v_draft.timer_seconds || ' seconds')::INTERVAL;
 
   UPDATE draft_state SET
-    current_pick_no = v_pick_no + 1,
-    round_no = CASE WHEN (v_pick_no + 1) % 10 = 1 THEN v_round + 1 ELSE v_round END,
+    current_pick_no = v_next_pick,
+    round_no = CEIL(v_next_pick::NUMERIC / 10)::INTEGER,
     current_manager_id = v_next_manager,
     pick_deadline = v_deadline
   WHERE league_id = v_league_id;
@@ -431,7 +440,9 @@ END;
 $function$;
 
 -- ─── auto_pick ─────────────────────────────────────────────
--- Called by DraftPage when deadline has passed. Locks draft_state, picks best available player.
+-- Called by the auto-pick edge function (cron) and the DraftPage poller when a
+-- deadline has passed. Locks draft_state (FOR UPDATE NOWAIT), picks best
+-- available fillable player by ranking, advances via slot_for_pick(next_pick).
 CREATE OR REPLACE FUNCTION public.auto_pick(p_league_id UUID, p_manager_id UUID, p_pick_no INTEGER, p_round_no INTEGER)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -440,8 +451,8 @@ AS $function$
 DECLARE
   v_draft draft_state%ROWTYPE;
   v_player RECORD;
-  v_slot INTEGER;
-  v_max_slot INTEGER;
+  v_next_pick INTEGER;
+  v_next_slot INTEGER;
   v_next_manager UUID;
   v_deadline TIMESTAMPTZ;
   v_timer_secs INTEGER DEFAULT 60;
@@ -466,8 +477,6 @@ BEGIN
   IF EXISTS (SELECT 1 FROM draft_picks WHERE league_id = p_league_id AND pick_no = p_pick_no AND round_no = p_round_no) THEN
     RETURN json_build_object('skipped', true, 'reason', 'already picked');
   END IF;
-
-  SELECT draft_slot INTO v_slot FROM managers WHERE id = p_manager_id;
 
   SELECT
     COUNT(CASE WHEN p.position = 'GK' THEN 1 END),
@@ -503,16 +512,6 @@ BEGIN
 
   IF v_players_added IS NULL THEN RETURN json_build_object('error', 'No available player found'); END IF;
 
-  SELECT COALESCE(MAX(draft_slot), 1) INTO v_max_slot FROM managers;
-  IF p_round_no % 2 = 1 THEN
-    IF v_slot >= v_max_slot THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = 1 LIMIT 1;
-    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot + 1 LIMIT 1; END IF;
-  ELSE
-    IF v_slot <= 1 THEN SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_max_slot LIMIT 1;
-    ELSE SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_slot - 1 LIMIT 1; END IF;
-  END IF;
-
-  IF v_next_manager IS NULL THEN v_next_manager := p_manager_id; END IF;
   IF v_draft.timer_seconds IS NOT NULL THEN v_timer_secs := v_draft.timer_seconds; END IF;
   v_deadline := NOW() + (v_timer_secs || ' seconds')::INTERVAL;
 
@@ -521,9 +520,15 @@ BEGIN
     RETURN json_build_object('ok', true, 'pick_no', p_pick_no, 'draft_complete', true);
   END IF;
 
+  -- Canonical advance
+  v_next_pick := p_pick_no + 1;
+  v_next_slot := public.slot_for_pick(v_next_pick);
+  SELECT id INTO v_next_manager FROM managers WHERE draft_slot = v_next_slot LIMIT 1;
+  IF v_next_manager IS NULL THEN v_next_manager := p_manager_id; END IF;
+
   UPDATE draft_state SET
-    current_pick_no = p_pick_no + 1,
-    round_no = CASE WHEN (p_pick_no + 1) % 10 = 1 THEN p_round_no + 1 ELSE p_round_no END,
+    current_pick_no = v_next_pick,
+    round_no = CEIL(v_next_pick::NUMERIC / 10)::INTEGER,
     current_manager_id = v_next_manager,
     pick_deadline = v_deadline
   WHERE league_id = p_league_id;
