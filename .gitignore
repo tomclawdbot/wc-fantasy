@@ -7,3 +7,4 @@ scripts/
 
 # Supabase
 supabase/.temp/
+.DS_Store
