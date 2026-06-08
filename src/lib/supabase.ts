@@ -46,10 +46,13 @@ export interface DraftState {
   round_no: number;
   pick_deadline: string | null;
   timer_seconds: number;
+  league_id: string;
+  current_manager_id: string;
 }
 
 export interface DraftPick {
   pick_no: number;
+  round_no: number;
   manager_id: string;
   player_id: string;
   auto_pick: boolean;

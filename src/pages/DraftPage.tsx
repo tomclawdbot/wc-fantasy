@@ -77,10 +77,6 @@ export default function DraftPage() {
   const myPicks = picks.filter(p => p.managers?.draft_slot === mySlot);
   const countPos = (pos: string) => myPicks.filter(p => p.players?.position === pos).length;
 
-  // Count my roster by position
-  const myPicks = picks.filter(p => p.managers?.draft_slot === mySlot);
-  const countPos = (pos: string) => myPicks.filter(p => p.players?.position === pos).length;
-
   // Auto-pick: check deadline + make pick server-side (no auth needed for service key)
   const checkAndAutoPick = useCallback(async (draftState: DraftState, existingPicks: DraftPick[]) => {
     if (!draftState || draftState.status !== 'in_progress' || autoPickingRef.current) return;
@@ -99,10 +95,10 @@ export default function DraftPage() {
         p_round_no: roundNo
       });
       if (error) console.error('Auto-pick error:', error.message);
-      else if (result) fetchAll();
+      else if (result) { const [m, d, p, pl, q] = await Promise.all([getMyManager(), getDraftState(), getDraftPicks(), getAvailablePlayers(), getMyQueue(manager?.id ?? '')]); setPicks(p); setDraft(d); }
     } catch (e) { console.error(e); }
     finally { setTimeout(() => { autoPickingRef.current = false; }, 2000); }
-  }, [fetchAll]);
+  }, [manager?.id]);
 
   const fetchAll = useCallback(async () => {
     const [m, d, p, pl, q] = await Promise.all([
