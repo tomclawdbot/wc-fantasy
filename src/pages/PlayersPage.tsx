@@ -159,6 +159,7 @@ export default function PlayersPage() {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
     if (nationFilter !== 'ALL' && p.nation !== nationFilter) return false;
+    if (nationFilter !== 'ALL' && !p.in_wc_squad) return false;
     // Hide duplicate entries (same surname+position+nation but worse ranking) — only in all-tab without search
     if (tab === 'all' && !searchResults && isDuplicate(p)) return false;
     return true;

@@ -29,6 +29,7 @@ export interface Player {
   club_logo_url?: string;
   owner_team_name?: string;  // populated when player is drafted
   owner_manager_id?: string; // for the viewer's own drafted players
+  in_wc_squad?: boolean; // true if player is in the official WC 2026 squad
 }
 
 export interface Manager {
@@ -355,6 +356,7 @@ export async function getAllPlayers(): Promise<Player[]> {
     club_logo_url: p.club_logo_url,
     owner_team_name: p.owner_team_name ?? undefined,
     owner_manager_id: p.owner_manager_id ?? undefined,
+    in_wc_squad: p.in_wc_squad ?? undefined,
   }));
 }
 export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
