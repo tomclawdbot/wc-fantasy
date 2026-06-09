@@ -344,8 +344,7 @@ export async function getAllPlayers(): Promise<Player[]> {
     .from('players')
     .select('*')
     .eq('status', 'active')
-    .order('ranking', { ascending: true, nullsFirst: false })
-    .limit(10000);
+    .range(0, 9999);  // Use range() to explicitly bypass PostgREST 1000-row default cap
 
   if (error) return [];
   if (!players || players.length === 0) return [];
