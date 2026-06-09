@@ -334,8 +334,8 @@ export async function getAllPlayers(): Promise<Player[]> {
   // PostgREST caps RPC responses at 1000 rows, so fetch in paginated chunks
   const chunks: any[][] = [];
   const CHUNK = 1000;
-  for (let offset = 0; ; offset += CHUNK) {
-    const { data, error } = await supabase.rpc('get_all_players').range(offset, offset + CHUNK - 1);
+  for (let offset = 0; offset < 3000; offset += CHUNK) {
+    const { data, error } = await supabase.rpc('get_all_players', { p_offset: offset, p_limit: CHUNK });
     if (error || !data || (data as any[]).length === 0) break;
     chunks.push(data as any[]);
     if ((data as any[]).length < CHUNK) break;
