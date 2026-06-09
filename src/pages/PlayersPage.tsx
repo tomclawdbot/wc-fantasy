@@ -236,7 +236,7 @@ export default function PlayersPage() {
 
       {/* Results count */}
       <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: 12 }}>
-        {tab === 'watchlist' ? `★ ${sorted.length} watched players` : searchResults ? `Fuzzy results: ${sorted.length}` : `Showing ${sorted.length} of ${players.length} players`}
+        {tab === 'watchlist' ? `★ ${sorted.length} watched` : searchResults ? `${sorted.length} results` : `${sorted.length} players`}
       </div>
 
       {/* Player grid */}
