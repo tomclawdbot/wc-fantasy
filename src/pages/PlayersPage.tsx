@@ -95,7 +95,11 @@ export default function PlayersPage() {
   const [searchResults, setSearchResults] = useState<Player[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [filterPos, setFilterPos] = useState<FilterPos>('ALL');
+  const [nationFilter, setNationFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState<SortKey>('ranking');
+
+  // Unique nations for dropdown, sorted alphabetically
+  const nations = ['ALL', ...new Set(players.map(p => p.nation).filter(Boolean) as string[])].sort((a, b) => a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b));
   const [tab, setTab] = useState<'all' | 'watchlist'>('all');
   const [loading, setLoading] = useState(true);
 
@@ -154,6 +158,7 @@ export default function PlayersPage() {
   const filtered = baseList.filter(p => {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
+    if (nationFilter !== 'ALL' && p.nation !== nationFilter) return false;
     // Hide duplicate entries (same surname+position+nation but worse ranking) — only in all-tab without search
     if (tab === 'all' && !searchResults && isDuplicate(p)) return false;
     return true;
@@ -195,7 +200,7 @@ export default function PlayersPage() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="Search players (fuzzy match)..."
+          placeholder="Search players..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
@@ -206,6 +211,13 @@ export default function PlayersPage() {
           }}
         />
 
+        <select
+          value={nationFilter}
+          onChange={e => setNationFilter(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', fontSize: '0.875rem', cursor: 'pointer' }}
+        >
+          {nations.map(n => <option key={n} value={n}>{n === 'ALL' ? 'All Nations' : n}</option>)}
+        </select>
         <div style={{ display: 'flex', gap: 4 }}>
           {positions.map(pos => (
             <button
