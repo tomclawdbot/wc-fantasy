@@ -331,10 +331,17 @@ export async function setPlayerWatched(managerId: string, playerId: string, watc
 }
 
 export async function getAllPlayers(): Promise<Player[]> {
-  // Use the RPC to get ALL players (bypasses PostgREST JOIN row-limit cap)
-  const { data, error } = await supabase.rpc('get_all_players');
-  if (error || !data) return [];
-  return (data as any[]).map((p: any) => ({
+  // PostgREST caps RPC responses at 1000 rows, so fetch in paginated chunks
+  const chunks: any[][] = [];
+  const CHUNK = 1000;
+  for (let offset = 0; ; offset += CHUNK) {
+    const { data, error } = await supabase.rpc('get_all_players').range(offset, offset + CHUNK - 1);
+    if (error || !data || (data as any[]).length === 0) break;
+    chunks.push(data as any[]);
+    if ((data as any[]).length < CHUNK) break;
+  }
+  const flat = chunks.flat();
+  return flat.map((p: any) => ({
     id: p.id,
     name: p.name,
     position: (p as any)['position'],
