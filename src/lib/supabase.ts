@@ -106,6 +106,16 @@ export async function makePick(playerId: string) {
   return supabase.rpc('make_pick', { p_player_id: playerId });
 }
 
+export async function searchPlayers(query: string, limit = 50): Promise<Player[]> {
+  if (!query.trim()) return [];
+  const { data, error } = await supabase.rpc('search_players', {
+    search_query: query.trim(),
+    limit_count: limit,
+  });
+  if (error || !data) return [];
+  return data.map((p: any) => ({ ...p, similarity: p.similarity }));
+}
+
 export async function getMyManager() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
@@ -337,7 +347,8 @@ export async function getAllPlayers(): Promise<Player[]> {
       rosters!left(manager_id, active, managers!inner(id, team_name))
     `)
     .eq('status', 'active')
-    .order('ranking', { ascending: true, nullsFirst: false });
+    .order('ranking', { ascending: true, nullsFirst: false })
+    .limit(10000);  // Override Supabase default 1000-row cap
 
   if (error) return [];
 

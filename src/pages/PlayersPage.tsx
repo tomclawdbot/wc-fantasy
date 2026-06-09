@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getAllPlayers, getPlayerNotes, setPlayerWatched, getWatchedPlayers, type Player } from '../lib/supabase';
+import { getMyManager, getAllPlayers, getPlayerNotes, setPlayerWatched, getWatchedPlayers, searchPlayers, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 function PlayerCard({ player, watched, onWatch, showing }: {
@@ -92,6 +92,8 @@ export default function PlayersPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [watched, setWatched] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<Player[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [filterPos, setFilterPos] = useState<FilterPos>('ALL');
   const [sortBy, setSortBy] = useState<SortKey>('ranking');
   const [tab, setTab] = useState<'all' | 'watchlist'>('all');
@@ -113,13 +115,28 @@ export default function PlayersPage() {
 
   useEffect(() => { load(); }, []);
 
+  // Debounced fuzzy search
+  useEffect(() => {
+    if (!search.trim()) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    const timer = setTimeout(async () => {
+      const results = await searchPlayers(search.trim());
+      setSearchResults(results);
+      setSearchLoading(false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const toggleWatch = async (playerId: string, value: boolean) => {
     setWatched(prev => ({ ...prev, [playerId]: value }));
     await setPlayerWatched(manager.id, playerId, value);
   };
 
   // Filter + sort
-  const searchNorm = search.toLowerCase().trim();
   // Deduplication: for players with same normalized surname + nation,
   // keep only the best-ranked (lowest number) and hide the rest from the main grid.
   // Normalize: strip accents from full name, extract last word as surname.
@@ -132,14 +149,13 @@ export default function PlayersPage() {
     return (p.ranking ?? 999) > bestRank[k];
   };
 
-  const filtered = players.filter(p => {
+  // Use fuzzy search results when searching, otherwise all players
+  const baseList = searchResults ?? players;
+  const filtered = baseList.filter(p => {
     if (tab === 'watchlist' && !watched[p.id]) return false;
     if (filterPos !== 'ALL' && p.position !== filterPos) return false;
-    // Hide duplicate entries (same surname+position+nation but worse ranking)
-    if (tab === 'all' && isDuplicate(p)) return false;
-    if (searchNorm && !p.name.toLowerCase().includes(searchNorm) &&
-        !p.nation.toLowerCase().includes(searchNorm) &&
-        !(p.club_name ?? '').toLowerCase().includes(searchNorm)) return false;
+    // Hide duplicate entries (same surname+position+nation but worse ranking) — only in all-tab without search
+    if (tab === 'all' && !searchResults && isDuplicate(p)) return false;
     return true;
   });
 
@@ -164,7 +180,7 @@ export default function PlayersPage() {
             className={tab === 'all' ? 'btn-primary' : 'btn-secondary'}
             onClick={() => setTab('all')}
           >
-            All Players ({players.length})
+            All Players ({searchResults ? searchResults.length : players.length})
           </button>
           <button
             className={tab === 'watchlist' ? 'btn-primary' : 'btn-secondary'}
@@ -179,7 +195,7 @@ export default function PlayersPage() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="Search name, club, nation..."
+          placeholder="Search players (fuzzy match)..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
@@ -220,7 +236,7 @@ export default function PlayersPage() {
 
       {/* Results count */}
       <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: 12 }}>
-        {tab === 'watchlist' ? `★ ${sorted.length} watched players` : `Showing ${sorted.length} of ${players.length} players`}
+        {tab === 'watchlist' ? `★ ${sorted.length} watched players` : searchResults ? `Fuzzy results: ${sorted.length}` : `Showing ${sorted.length} of ${players.length} players`}
       </div>
 
       {/* Player grid */}
