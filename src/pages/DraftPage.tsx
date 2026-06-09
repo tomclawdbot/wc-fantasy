@@ -60,6 +60,7 @@ export default function DraftPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [queue, setQueue] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>('ALL');
+  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickError, setPickError] = useState('');
@@ -140,7 +141,12 @@ export default function DraftPage() {
     fetchAll();
   };
 
-  const filtered = filter === 'ALL' ? players : players.filter(p => p.position === filter);
+  const filtered = players.filter(p => {
+    const matchPos = filter === 'ALL' || p.position === filter;
+    const q = search.toLowerCase().trim();
+    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.club.toLowerCase().includes(q) || p.nation.toLowerCase().includes(q);
+    return matchPos && matchSearch;
+  });
 
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
   if (!manager) return null;
@@ -236,6 +242,15 @@ export default function DraftPage() {
 
           {isMyTurn && !showQueue && (
             <>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <input
+                  type="search"
+                  placeholder="Search players..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  style={{ flex: 1, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', fontSize: '0.875rem' }}
+                />
+              </div>
               <div className="pool-filters">
                 {['ALL','GK','DEF','MID','FWD'].map(f => (
                   <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{f}</button>
