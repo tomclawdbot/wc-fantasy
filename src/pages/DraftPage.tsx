@@ -227,8 +227,8 @@ export default function DraftPage() {
         </div>
       )}
 
-      {/* Pick action */}
-      {draft?.status !== 'complete' && (
+      {/* Pick action — only show during active draft */}
+      {draft?.status === 'in_progress' && (
         <div className="card" style={{ marginBottom: 20 }}>
           <h2 style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: 12, textTransform: 'uppercase' }}>
             {isMyTurn ? '🎯 Your Turn — select a player' : `Slot ${currentPickerSlot} is picking...`}
