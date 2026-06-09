@@ -267,6 +267,7 @@ CREATE POLICY lineups_own ON lineups FOR ALL USING (manager_id IN (SELECT id FRO
 CREATE POLICY transfers_read ON transfers FOR SELECT USING (manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()));
 CREATE POLICY players_read ON players FOR SELECT USING (true);
 CREATE POLICY standings_read ON standings FOR SELECT USING (manager_id IN (SELECT id FROM managers WHERE user_id = auth.uid()));
+CREATE POLICY standings_write ON standings FOR ALL USING (true); -- service role + SECURITY DEFINER functions
 CREATE POLICY match_scores_read ON match_scores FOR SELECT USING (true);
 -- Player research / watchlist
 CREATE TABLE IF NOT EXISTS player_notes (
@@ -669,25 +670,96 @@ END;
 $function$;
 
 -- ─── recompute_standings ─────────────────────────────────────────────
--- Reset all manager standings to 0. Called before full recalculation.
+-- Full recalculation: for each manager, sum match_scores points for all players
+-- in their lineups, grouped by phase. Knockout phases (R16/QF/SF/Final) get 2x multiplier.
+-- Inserts a row for every manager (even with 0 points / no lineups).
+-- Note: fixtures have no matchday_id, so we join on phase — all fixtures in
+-- a given phase count toward any matchday of that phase.
 CREATE OR REPLACE FUNCTION public.recompute_standings()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $function$
+DECLARE
+  v_mgr RECORD;
+  v_phase TEXT;
+  v_pts INTEGER;
+  v_by_phase JSONB;
+  v_group_pts INTEGER;
+  v_knockout_pts INTEGER;
 BEGIN
-  UPDATE standings SET total_points = 0, by_phase = '{}'::jsonb, updated_at = now();
+  FOR v_mgr IN
+    SELECT m.id AS manager_id
+    FROM managers m
+  LOOP
+    v_by_phase := '{}'::jsonb;
+    v_group_pts := 0;
+    v_knockout_pts := 0;
+
+    -- For each matchday phase, sum match_scores for players in this manager's lineups
+    -- whose fixtures match that phase. Map matchday phase to fixture phase:
+    -- MD1/MD2/MD3 -> 'group', knockout matchdays -> their own phase
+    FOR v_phase IN SELECT DISTINCT md.phase
+      FROM lineups l2
+      JOIN matchdays md ON md.id = l2.matchday_id
+      WHERE l2.manager_id = v_mgr.manager_id
+    LOOP
+      -- Map matchday phase to fixture phase
+      v_pts := 0;
+      IF v_phase IN ('MD1', 'MD2', 'MD3') THEN
+        SELECT COALESCE(SUM(ms.points), 0)
+        INTO v_pts
+        FROM match_scores ms
+        JOIN fixtures f ON f.id = ms.fixture_id
+        JOIN lineups l2 ON l2.player_id = ms.player_id
+        JOIN matchdays md ON md.id = l2.matchday_id
+        WHERE l2.manager_id = v_mgr.manager_id
+          AND md.phase = v_phase
+          AND f.phase = 'group';
+      ELSE
+        SELECT COALESCE(SUM(ms.points), 0)
+        INTO v_pts
+        FROM match_scores ms
+        JOIN fixtures f ON f.id = ms.fixture_id
+        JOIN lineups l2 ON l2.player_id = ms.player_id
+        JOIN matchdays md ON md.id = l2.matchday_id
+        WHERE l2.manager_id = v_mgr.manager_id
+          AND md.phase = v_phase
+          AND f.phase = v_phase;
+      END IF;
+
+      v_by_phase := jsonb_set(v_by_phase, ARRAY[v_phase], to_jsonb(v_pts));
+
+
+      IF v_phase IN ('MD1', 'MD2', 'MD3') THEN
+        v_group_pts := v_group_pts + v_pts;
+      ELSE
+        v_knockout_pts := v_knockout_pts + v_pts;
+      END IF;
+    END LOOP;
+
+    -- Total: group pts at 1x, knockout pts at 2x
+    v_pts := v_group_pts + (2 * v_knockout_pts);
+
+    INSERT INTO standings (manager_id, total_points, by_phase, updated_at)
+    VALUES (v_mgr.manager_id, v_pts, v_by_phase, now())
+    ON CONFLICT (manager_id) DO UPDATE
+      SET total_points = EXCLUDED.total_points,
+          by_phase = EXCLUDED.by_phase,
+          updated_at = now();
+  END LOOP;
 END;
 $function$;
 
 -- ─── set_lineup ─────────────────────────────────────────────────────
 -- Atomic upsert of XI for a manager on a matchday.
 -- Validates all 11 players are in the manager's active roster.
+-- Note: slots are assigned 1-11 in the order of p_player_ids.
 CREATE OR REPLACE FUNCTION public.set_lineup(p_manager_id uuid, p_matchday_id uuid, p_player_ids uuid[])
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-AS $function$
+AS $inner$
 BEGIN
   IF array_length(p_player_ids, 1) != 11 THEN
     RETURN json_build_object('error', 'Must select exactly 11 players');
@@ -703,11 +775,10 @@ BEGIN
   END IF;
 
   DELETE FROM lineups WHERE manager_id = p_manager_id AND matchday_id = p_matchday_id;
-  INSERT INTO lineups (manager_id, matchday_id, player_id, position)
-  SELECT p_manager_id, p_matchday_id, pid,
-    COALESCE((SELECT position FROM players WHERE id = pid LIMIT 1), 'MID')
+  INSERT INTO lineups (manager_id, matchday_id, player_id, slot)
+  SELECT p_manager_id, p_matchday_id, pid, row_number() OVER (ORDER BY 1)
   FROM unnest(p_player_ids) pid;
 
   RETURN json_build_object('ok', true, 'count', array_length(p_player_ids, 1));
 END;
-$function$;
+$inner$;
