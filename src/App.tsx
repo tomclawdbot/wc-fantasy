@@ -44,6 +44,9 @@ function NavBar() {
           {l.label}
         </Link>
       ))}
+      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--muted)', alignSelf: 'center' }}>
+        {session.user.email}
+      </span>
     </nav>
   );
 }

@@ -29,7 +29,7 @@ export default function LoginPage() {
     <div className="page" style={{ maxWidth: 400, margin: '80px auto', textAlign: 'center' }}>
       <h1 style={{ fontSize: '1.5rem', marginBottom: 8 }}>🏆 WC Fantasy League</h1>
       <p style={{ color: 'var(--muted)', marginBottom: 32, fontSize: '0.9rem' }}>
-        Sign in with your invited email address
+        Enter your invited email — we'll send you a magic link (no password needed)
       </p>
 
       {sent ? (
@@ -50,7 +50,7 @@ export default function LoginPage() {
           />
           {error && <p style={{ color: 'var(--danger)', fontSize: '0.875rem' }}>{error}</p>}
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? 'Sending...' : 'Send Magic Link'}
+            {loading ? 'Sending...' : 'Send Magic Link 📧'}
           </button>
         </form>
       )}
