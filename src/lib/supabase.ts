@@ -350,6 +350,7 @@ export async function getAllPlayers(): Promise<Player[]> {
     owner_manager_id: p.owner_manager_id ?? undefined,
   }));
 }
+export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
   const { data } = await supabase
     .from('player_notes')
     .select('player_id, players(*)')
