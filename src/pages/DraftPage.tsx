@@ -61,6 +61,10 @@ export default function DraftPage() {
   const [queue, setQueue] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>('ALL');
   const [search, setSearch] = useState('');
+  const [nationFilter, setNationFilter] = useState('ALL');
+
+  // Unique nations for dropdown, sorted alphabetically
+  const nations = ['ALL', ...new Set(players.map(p => p.nation).filter(Boolean) as string[])].sort((a, b) => a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b));
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickError, setPickError] = useState('');
@@ -143,9 +147,10 @@ export default function DraftPage() {
 
   const filtered = players.filter(p => {
     const matchPos = filter === 'ALL' || p.position === filter;
+    const matchNation = nationFilter === 'ALL' || p.nation === nationFilter;
     const q = search.toLowerCase().trim();
-    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.club.toLowerCase().includes(q) || p.nation.toLowerCase().includes(q);
-    return matchPos && matchSearch;
+    const matchSearch = !q || p.name.toLowerCase().includes(q);
+    return matchPos && matchNation && matchSearch;
   });
 
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
@@ -245,11 +250,18 @@ export default function DraftPage() {
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <input
                   type="search"
-                  placeholder="Search players..."
+                  placeholder="Search by name..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   style={{ flex: 1, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', fontSize: '0.875rem' }}
                 />
+                <select
+                  value={nationFilter}
+                  onChange={e => setNationFilter(e.target.value)}
+                  style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', fontSize: '0.875rem', cursor: 'pointer' }}
+                >
+                  {nations.map(n => <option key={n} value={n}>{n === 'ALL' ? 'All Nations' : n}</option>)}
+                </select>
               </div>
               <div className="pool-filters">
                 {['ALL','GK','DEF','MID','FWD'].map(f => (
