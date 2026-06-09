@@ -339,31 +339,41 @@ export async function getAllPlayers(): Promise<Player[]> {
     myManagerId = m?.id ?? null;
   }
 
-  // Fetch players with roster ownership via LEFT JOIN
-  const { data, error } = await supabase
+  // Fetch players WITHOUT join to avoid PostgREST 1000-row cap on joined queries
+  const { data: players, error } = await supabase
     .from('players')
-    .select(`
-      *,
-      rosters!left(manager_id, active, managers!inner(id, team_name))
-    `)
+    .select('*')
     .eq('status', 'active')
     .order('ranking', { ascending: true, nullsFirst: false })
-    .limit(10000);  // Override Supabase default 1000-row cap
+    .limit(10000);
 
   if (error) return [];
+  if (!players || players.length === 0) return [];
 
-  return (data ?? []).map((p: any) => {
-    // Find active roster entry for this player
-    const roster = p.rosters?.find((r: any) => r.active);
-    const ownerManager = roster?.managers;
-    const ownerTeamName = ownerManager?.team_name ?? null;
+  // Fetch all active rosters + their managers separately (avoids join row-limit cap)
+  const { data: rosters } = await supabase
+    .from('rosters')
+    .select('player_id, manager_id, active, managers(id, team_name)')
+    .eq('active', true)
+    .limit(10000);
 
+  // Build a map of player_id -> {team_name, manager_id} from active rosters
+  const rosterMap: Record<string, { team_name: string; manager_id: string }> = {};
+  for (const r of (rosters ?? [])) {
+    if (r.active) {
+      rosterMap[r.player_id] = {
+        team_name: (r.managers as any)?.team_name ?? null,
+        manager_id: r.manager_id,
+      };
+    }
+  }
+
+  return (players as any[]).map((p: any) => {
+    const owner = rosterMap[p.id];
     return {
       ...p,
-      owner_team_name: ownerTeamName ?? undefined,
-      owner_manager_id: roster?.manager_id ?? undefined,
-      // Hide abbreviated names (e.g. "L. Messi", "H. Lloris") from main list
-      // but keep them queryable — they'll show if user specifically searches them
+      owner_team_name: owner?.team_name ?? undefined,
+      owner_manager_id: owner?.manager_id ?? undefined,
     };
   });
 }
