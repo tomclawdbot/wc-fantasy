@@ -331,53 +331,25 @@ export async function setPlayerWatched(managerId: string, playerId: string, watc
 }
 
 export async function getAllPlayers(): Promise<Player[]> {
-  // Get my manager ID for ownership highlighting
-  const { data: { user } } = await supabase.auth.getUser();
-  let myManagerId: string | null = null;
-  if (user) {
-    const { data: m } = await supabase.from('managers').select('id').eq('user_id', user.id).single();
-    myManagerId = m?.id ?? null;
-  }
-
-  // Fetch players WITHOUT join to avoid PostgREST 1000-row cap on joined queries
-  const { data: players, error } = await supabase
-    .from('players')
-    .select('*')
-    .eq('status', 'active')
-    .range(0, 9999);  // Use range() to explicitly bypass PostgREST 1000-row default cap
-
-  if (error) return [];
-  if (!players || players.length === 0) return [];
-
-  // Fetch all active rosters + their managers separately (avoids join row-limit cap)
-  const { data: rosters } = await supabase
-    .from('rosters')
-    .select('player_id, manager_id, active, managers(id, team_name)')
-    .eq('active', true)
-    .limit(10000);
-
-  // Build a map of player_id -> {team_name, manager_id} from active rosters
-  const rosterMap: Record<string, { team_name: string; manager_id: string }> = {};
-  for (const r of (rosters ?? [])) {
-    if (r.active) {
-      rosterMap[r.player_id] = {
-        team_name: (r.managers as any)?.team_name ?? null,
-        manager_id: r.manager_id,
-      };
-    }
-  }
-
-  return (players as any[]).map((p: any) => {
-    const owner = rosterMap[p.id];
-    return {
-      ...p,
-      owner_team_name: owner?.team_name ?? undefined,
-      owner_manager_id: owner?.manager_id ?? undefined,
-    };
-  });
+  // Use the RPC to get ALL players (bypasses PostgREST JOIN row-limit cap)
+  const { data, error } = await supabase.rpc('get_all_players');
+  if (error || !data) return [];
+  return (data as any[]).map((p: any) => ({
+    id: p.id,
+    name: p.name,
+    position: (p as any)['position'],
+    nation: p.nation,
+    club: p.club,
+    status: p.status,
+    ranking: p.ranking,
+    ext_player_id: p.ext_player_id,
+    photo_url: p.photo_url,
+    nation_flag_url: p.nation_flag_url,
+    club_logo_url: p.club_logo_url,
+    owner_team_name: p.owner_team_name ?? undefined,
+    owner_manager_id: p.owner_manager_id ?? undefined,
+  }));
 }
-
-export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
   const { data } = await supabase
     .from('player_notes')
     .select('player_id, players(*)')
