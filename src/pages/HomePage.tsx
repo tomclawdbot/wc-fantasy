@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getDraftState, getStandings, getMatchdays, getTransferWindows, getMyRoster, supabase } from '../lib/supabase';
+import { getMyManager, getDraftState, getStandings, getMatchdays, getTransferWindows, getMyRoster, supabase, checkEmailAllowed } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 export default function HomePage() {
@@ -11,6 +11,7 @@ export default function HomePage() {
   const [windows, setWindows] = useState<any[]>([]);
   const [roster, setRoster] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const load = async () => {
@@ -20,15 +21,24 @@ export default function HomePage() {
       if (!m) {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
+          // Check if this email is on the invited allowlist
+          const allowed = await checkEmailAllowed(user.email ?? '');
+          if (!allowed) {
+            setError('Your email is not on the invite list. Please contact the commissioner.');
+            setLoading(false);
+            return;
+          }
           const { data: newManager, error } = await supabase.from('managers').insert({
             user_id: user.id,
             display_name: user.email?.split('@')[0] ?? 'Manager',
+            email: user.email ?? null,
             is_commissioner: false,
           }).select().single();
           if (!error && newManager) {
             m = newManager;
           } else {
-            navigate('/login');
+            setError('Database error saving new user. Please contact the commissioner.');
+            setLoading(false);
             return;
           }
         } else {
@@ -59,6 +69,18 @@ export default function HomePage() {
   }, [navigate]);
 
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
+
+  if (error) return (
+    <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
+      <div className="card" style={{ maxWidth: 400, textAlign: 'center' }}>
+        <p style={{ color: 'var(--danger)', marginBottom: 16, fontWeight: 600 }}>⚠️ {error}</p>
+        <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginBottom: 16 }}>Contact the commissioner if you believe this is an error.</p>
+        <button className="btn-primary" onClick={() => supabase.auth.signOut().then(() => navigate('/login'))}>
+          Back to Login
+        </button>
+      </div>
+    </div>
+  );
 
   const myStanding = standings.find(s => s.manager_id === manager?.id);
   const topStandings = standings.slice(0, 3);

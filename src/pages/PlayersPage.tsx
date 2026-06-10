@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getMyManager, getAllPlayers, getPlayerNotes, setPlayerWatched, getWatchedPlayers, searchPlayers, type Player } from '../lib/supabase';
+import { getMyManager, getAllPlayers, getPlayerNotes, setPlayerWatched, getWatchedPlayers, searchPlayers, getWcNations, type Player } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 
 function PlayerCard({ player, watched, onWatch, showing }: {
@@ -97,9 +97,15 @@ export default function PlayersPage() {
   const [filterPos, setFilterPos] = useState<FilterPos>('ALL');
   const [nationFilter, setNationFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState<SortKey>('ranking');
+  const [wcNations, setWcNations] = useState<string[]>([]);
 
-  // Unique nations for dropdown, sorted alphabetically
-  const nations = ['ALL', ...new Set(players.map(p => p.nation).filter(Boolean) as string[])].sort((a, b) => a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b));
+  // Unique WC nations for dropdown, sorted alphabetically (excludes Wales, UAE, Italy, etc.)
+  const nations = ['ALL', ...new Set(
+    players
+      .filter(p => p.is_wc_nation)
+      .map(p => p.nation)
+      .filter(Boolean) as string[]
+  )].sort((a, b) => a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b));
   const [tab, setTab] = useState<'all' | 'watchlist'>('all');
   const [loading, setLoading] = useState(true);
 
@@ -108,11 +114,13 @@ export default function PlayersPage() {
     if (!m) { navigate('/login'); return; }
     setManager(m);
 
-    const [allPlayers, notes] = await Promise.all([
+    const [allPlayers, notes, wcNationsList] = await Promise.all([
       getAllPlayers(),
       getPlayerNotes(m.id),
+      getWcNations(),
     ]);
     setPlayers(allPlayers);
+    setWcNations(wcNationsList);
     setWatched(Object.fromEntries(Object.entries(notes).map(([k, v]) => [k, v.watched])));
     setLoading(false);
   };

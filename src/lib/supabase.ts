@@ -30,6 +30,7 @@ export interface Player {
   owner_team_name?: string;  // populated when player is drafted
   owner_manager_id?: string; // for the viewer's own drafted players
   in_wc_squad?: boolean; // true if player is in the official WC 2026 squad
+  is_wc_nation?: boolean; // true if player's nation is one of the 48 WC 2026 nations
 }
 
 export interface Manager {
@@ -331,6 +332,25 @@ export async function setPlayerWatched(managerId: string, playerId: string, watc
   }, { onConflict: 'manager_id,player_id' });
 }
 
+export async function getWcNations(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('wc_nations')
+    .select('nation')
+    .eq('is_wc_nation', true);
+  if (error) throw error;
+  return (data ?? []).map(row => row.nation);
+}
+
+export async function checkEmailAllowed(email: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('allowed_emails')
+    .select('email')
+    .eq('email', email.toLowerCase())
+    .single();
+  if (error || !data) return false;
+  return true;
+}
+
 export async function getAllPlayers(): Promise<Player[]> {
   // PostgREST caps RPC responses at 1000 rows, so fetch in paginated chunks
   const chunks: any[][] = [];
@@ -357,6 +377,7 @@ export async function getAllPlayers(): Promise<Player[]> {
     owner_team_name: p.owner_team_name ?? undefined,
     owner_manager_id: p.owner_manager_id ?? undefined,
     in_wc_squad: p.in_wc_squad ?? undefined,
+    is_wc_nation: p.is_wc_nation ?? undefined,
   }));
 }
 export async function getWatchedPlayers(managerId: string): Promise<Player[]> {
