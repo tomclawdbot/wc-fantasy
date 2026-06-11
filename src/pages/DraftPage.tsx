@@ -1,23 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  getMyManager, getDraftState, getDraftPicks, getAvailablePlayers,
-  getMyQueue, upsertQueue, makePick, subscribeToDraft, supabase, type DraftState, type DraftPick, type Player
+  getMyManager, getDraftState, getDraftPicks, getAvailablePlayers, getManagers,
+  getMyQueue, upsertQueue, makePick, subscribeToDraft, getLeagueConfig, supabase,
+  type DraftState, type DraftPick, type Player, type Manager, type LeagueConfig
 } from '../lib/supabase';
-
-function getSnakeOrder(rounds = 15): number[] {
-  const picks: number[] = [];
-  for (let r = 1; r <= rounds; r++) {
-    for (let s = 1; s <= 10; s++) picks.push(r % 2 === 1 ? s : 11 - s);
-  }
-  return picks;
-}
-
-function getManagerForPick(pickNo: number): number {
-  const round = Math.ceil(pickNo / 10);
-  const pos = pickNo - (round - 1) * 10;
-  return round % 2 === 1 ? pos : 11 - pos;
-}
+import { FALLBACK_CONFIG } from '../config/types';
+import { slotForPick, roundForPick } from '../lib/rules';
 
 function Timer({ deadline }: { deadline: string | null }) {
   const [secs, setSecs] = useState(0);
@@ -54,8 +43,9 @@ function QuotaBar({ current, max, label }: { current: number; max: number; label
 export default function DraftPage() {
   const navigate = useNavigate();
   const [manager, setManager] = useState<any>(null);
+  const [managers, setManagers] = useState<Manager[]>([]);
+  const [config, setConfig] = useState<LeagueConfig>(FALLBACK_CONFIG);
   const [draft, setDraft] = useState<DraftState | null>(null);
-  const QUOTA = { GK: 2, DEF: 5, MID: 5, FWD: 3 };
   const [picks, setPicks] = useState<DraftPick[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [queue, setQueue] = useState<any[]>([]);
@@ -72,11 +62,13 @@ export default function DraftPage() {
   const [queueEdit, setQueueEdit] = useState<string[]>([]);
   const autoPickingRef = useRef(false);
 
-  const SNAKE = getSnakeOrder();
+  const numManagers = managers.filter(m => m.draft_slot != null).length || 1;
+  const totalPicks = numManagers * config.squad.size;
+  const quota = config.squad.quota;
 
   const mySlot = manager?.draft_slot ?? 0;
-  const isMyTurn = draft?.status === 'in_progress' && getManagerForPick(draft.current_pick_no) === mySlot;
-  const currentPickerSlot = draft?.current_pick_no ? getManagerForPick(draft.current_pick_no) : 1;
+  const isMyTurn = draft?.status === 'in_progress' && slotForPick(draft.current_pick_no, numManagers) === mySlot;
+  const currentPickerSlot = draft?.current_pick_no ? slotForPick(draft.current_pick_no, numManagers) : 1;
 
   // Count my roster by position
   const myPicks = picks.filter(p => p.managers?.draft_slot === mySlot);
@@ -106,11 +98,12 @@ export default function DraftPage() {
   }, [manager?.id]);
 
   const fetchAll = useCallback(async () => {
-    const [m, d, p, pl, q] = await Promise.all([
-      getMyManager(), getDraftState(), getDraftPicks(), getAvailablePlayers(), getMyQueue(manager?.id ?? '')
+    const [m, d, p, pl, q, mgrs, cfg] = await Promise.all([
+      getMyManager(), getDraftState(), getDraftPicks(), getAvailablePlayers(),
+      getMyQueue(manager?.id ?? ''), getManagers(), getLeagueConfig()
     ]);
     if (!m) { navigate('/login'); return; }
-    setManager(m); setDraft(d); setPicks(p); setPlayers(pl);
+    setManager(m); setDraft(d); setPicks(p); setPlayers(pl); setManagers(mgrs); setConfig(cfg);
     if (q.length > 0 && queueEdit.length === 0) setQueueEdit(q.map((e: any) => e.player_id));
     setLoading(false);
     // Check auto-pick immediately after loading draft state
@@ -156,8 +149,6 @@ export default function DraftPage() {
   if (loading) return <div className="page" style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>;
   if (!manager) return null;
 
-  const quota = { GK: 2, DEF: 5, MID: 5, FWD: 3 };
-
   return (
     <div className="page">
       {/* Header */}
@@ -166,7 +157,7 @@ export default function DraftPage() {
           <h1 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Live Snake Draft</h1>
           <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
             {draft?.status === 'complete' ? '✓ Draft Complete' :
-             draft?.status === 'in_progress' ? `Pick ${draft.current_pick_no} of 150 — Round ${Math.ceil((draft.current_pick_no) / 10)}` :
+             draft?.status === 'in_progress' ? `Pick ${draft.current_pick_no} of ${totalPicks} — Round ${roundForPick(draft.current_pick_no, numManagers)}` :
              'Waiting to start'}
           </p>
         </div>
@@ -191,15 +182,18 @@ export default function DraftPage() {
       <div className="card" style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Draft Board</h2>
         <div className="draft-board">
-          {Array.from({ length: 10 }, (_, i) => i + 1).map(slot => {
+          {Array.from({ length: numManagers }, (_, i) => i + 1).map(slot => {
             const slotPicks = picks.filter(p => p.managers?.draft_slot === slot);
             return (
               <div key={slot} style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                 <div className={`draft-board-header ${slot === currentPickerSlot && draft?.status === 'in_progress' ? 'active' : ''}`}>
                   {slot === mySlot ? `You (${slot})` : `Slot ${slot}`}
                 </div>
-                {Array.from({ length: 15 }, (_, r) => {
-                  const pickNo = r * 10 + slot;
+                {Array.from({ length: config.squad.size }, (_, r) => {
+                  const round = r + 1;
+                  const pickNo = round % 2 === 1
+                    ? r * numManagers + slot
+                    : r * numManagers + (numManagers + 1 - slot);
                   const pick = picks.find(p => p.pick_no === pickNo);
                   const isActive = slot === currentPickerSlot && draft?.status === 'in_progress';
                   return (
@@ -324,7 +318,7 @@ export default function DraftPage() {
       {draft?.status === 'complete' && (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
           <h2 style={{ color: 'var(--accent)', marginBottom: 8 }}>✓ Draft Complete!</h2>
-          <p style={{ color: 'var(--muted)', marginBottom: 20 }}>All 150 picks made. Head to Team to set your lineup.</p>
+          <p style={{ color: 'var(--muted)', marginBottom: 20 }}>All picks made. Head to Team to set your lineup.</p>
           <button className="btn-primary" onClick={() => navigate('/team')}>Go to My Team →</button>
         </div>
       )}

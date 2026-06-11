@@ -1,82 +1,57 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// import-squads — upserts tournament squads + teams from API-Football.
+// Tournament identity (league_id, season) comes from leagues.config.data_source,
+// not from code. Idempotent: upserts on ext ids.
+import { serviceClient, json, corsHeaders, getLeague, apiFootball } from '../_shared/lib.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+const POSITION_MAP: Record<string, string> = {
+  Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Attacker: 'FWD',
 };
 
-// ─── import_squads ─────────────────────────────────────────────
-// Fetches squads from API-Football and upserts into the players table.
-// Commissioner-only. Pool locks during active draft.
-serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  try {
+    const db = serviceClient();
+    const body = await req.json().catch(() => ({}));
+    const league = await getLeague(db, body.league_id);
+    const ds = league.config?.data_source;
+    if (!ds?.league_id || !ds?.season) return json({ error: 'config.data_source.league_id/season missing' }, 400);
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const db = createClient(supabaseUrl, serviceKey);
+    // 1. Tournament teams
+    const teams = await apiFootball('teams', { league: ds.league_id, season: ds.season });
+    let teamCount = 0;
+    for (const t of teams) {
+      const { error } = await db.from('tournament_teams').upsert({
+        league_id: league.id,
+        team: t.team?.name,
+        ext_team_id: String(t.team?.id ?? ''),
+        flag_url: t.team?.logo ?? null,
+      }, { onConflict: 'league_id,team' });
+      if (!error) teamCount++;
+    }
 
-  const token = req.headers.get('Authorization')?.replace('Bearer ', '');
-  const { data: { user } } = await db.auth.getUser(token);
-  if (!user) return json({ error: 'Unauthorized' }, 401);
+    // 2. Squads per team
+    let playerCount = 0;
+    for (const t of teams) {
+      const squads = await apiFootball('players/squads', { team: t.team.id });
+      for (const squad of squads) {
+        for (const p of squad.players ?? []) {
+          const { error } = await db.from('players').upsert({
+            ext_player_id: String(p.id),
+            name: p.name,
+            nation: t.team.name,
+            position: POSITION_MAP[p.position] ?? 'MID',
+            photo_url: p.photo ?? null,
+            nation_flag_url: t.team.logo ?? null,
+            in_squad: true,
+            status: 'active',
+          }, { onConflict: 'ext_player_id' });
+          if (!error) playerCount++;
+        }
+      }
+    }
 
-  const { data: manager } = await db.from('managers').select('*').eq('user_id', user.id).eq('is_commissioner', true).single();
-  if (!manager) return json({ error: 'Commissioner only' }, 403);
-
-  // Check draft not in progress
-  const { data: draft } = await db.from('draft_state').select('status').eq('league_id', manager.league_id).single();
-  if (draft?.status === 'in_progress') return json({ error: 'Pool locked during active draft' }, 400);
-
-  const apiKey = Deno.env.get('API_FOOTBALL_KEY');
-  if (!apiKey) return json({ error: 'API-Football key not configured' }, 500);
-
-  // Fetch squads from API-Football
-  // API-Football free tier: /fixtures?season=2026&league=1 (World Cup)
-  const url = `https://v3.football.api-sports.io/players?season=2026&league=1&team=1`;
-  const res = await fetch(url, {
-    headers: { 'x-apisports-key': apiKey }
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    return json({ error: `API-Football error: ${errText}` }, 502);
+    return json({ ok: true, league: league.name, teams: teamCount, players: playerCount });
+  } catch (e) {
+    return json({ error: String((e as Error).message ?? e) }, 500);
   }
-
-  const json_data = await res.json();
-  const apiPlayers: any[] = json_data.response ?? [];
-
-  let imported = 0;
-  let errors = 0;
-
-  for (const entry of apiPlayers) {
-    try {
-      const p = entry.player;
-      if (!p?.id) continue;
-
-      const { error: upsertErr } = await db.from('players').upsert({
-        ext_player_id: String(p.id),
-        name: `${p.firstname ?? ''} ${p.lastname ?? ''}`.trim(),
-        nation: p.nationality ?? 'Unknown',
-        club: entry.team?.name ?? null,
-        position: normalizePosition(entry.statistics?.[0]?.games?.position ?? 'MID'),
-        status: 'active',
-      }, { onConflict: 'ext_player_id' });
-
-      if (upsertErr) { errors++; console.error(upsertErr); }
-      else imported++;
-    } catch (e) { errors++; }
-  }
-
-  return json({ ok: true, imported, errors, total: apiPlayers.length });
 });
-
-function normalizePosition(pos: string): 'GK' | 'DEF' | 'MID' | 'FWD' {
-  const map: Record<string, string> = {
-    'Goalkeeper': 'GK', 'Defender': 'DEF', 'Midfielder': 'MID', 'Attacker': 'FWD', 'Forward': 'FWD',
-  };
-  return (map[pos] ?? 'MID') as any;
-}
-
-function json(data: any, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-}

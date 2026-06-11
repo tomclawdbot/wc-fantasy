@@ -97,11 +97,11 @@ export default function TeamPage() {
   }, [activeMatchday, manager]);
 
   const save = async () => {
-    if (xi.length !== 11) { setError('Must select exactly 11 players'); return; }
     setError('');
     setSaving(true);
-    await upsertLineup(manager.id, activeMatchday, xi);
+    const { error: err } = await upsertLineup(manager.id, activeMatchday, xi);
     setSaving(false);
+    if (err) setError(err.message ?? 'Save failed');
   };
 
   const togglePlayer = (id: string) => {

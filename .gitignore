@@ -8,3 +8,5 @@ scripts/
 # Supabase
 supabase/.temp/
 .DS_Store
+dist/
+.env
